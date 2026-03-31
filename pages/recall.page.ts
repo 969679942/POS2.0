@@ -18,49 +18,48 @@ export class RecallPage {
   private readonly paymentTypesButton: Locator;
   private readonly productLineButton: Locator;
   private readonly moreFiltersButton: Locator;
+  private readonly searchTriggerButton: Locator;
   private readonly topSearchInput: Locator;
   private readonly orderNumberBadges: Locator;
   private readonly searchDialog: Locator;
-  private readonly searchDialogInput: Locator;
+  private readonly searchDialogDefaultInput: Locator;
+  private readonly searchDialogNumberInput: Locator;
+  private readonly searchDialogAmountInput: Locator;
+  private readonly searchDialogDefaultInputClearButton: Locator;
+  private readonly searchDialogNumberInputClearButton: Locator;
+  private readonly searchDialogAmountInputClearButton: Locator;
   private readonly searchDialogSubmitButton: Locator;
-  private readonly searchDialogClearButton: Locator;
-  private readonly searchDialogCloseButton: Locator;
-  private readonly activeFilterRemoveButtons: Locator;
+  private readonly searchDialogKeyboardCloseButton: Locator;
+  private readonly activeFilterTags: Locator;
 
   constructor(private readonly page: Page) {
-    this.newOrderButton = this.page.getByRole('button', { name: /New Order/ });
-    this.pagingButton = this.page.getByRole('button', { name: /Paging/ });
-    this.paymentStatusButton = this.page.getByRole('button', {
-      name: /Payment Status$/,
-    });
-    this.orderStatusButton = this.page.getByRole('button', {
-      name: /Order Status$/,
-    });
-    this.orderTypesButton = this.page.getByRole('button', {
-      name: /Order Types$/,
-    });
-    this.paymentTypesButton = this.page.getByRole('button', {
-      name: /Payment Types$/,
-    });
-    this.productLineButton = this.page.getByRole('button', {
-      name: /Product Line$/,
-    });
-    this.moreFiltersButton = this.page.getByRole('button', { name: 'More Filters' });
-    this.topSearchInput = this.page.getByRole('textbox', { name: 'Search' }).first();
+    this.newOrderButton = this.page.getByTestId('recall2-header-new-order');
+    this.pagingButton = this.page.getByTestId('recall2-header-paging');
+    this.paymentStatusButton = this.page.getByTestId('recall2-filter-dropdown-paymentStatus');
+    this.orderStatusButton = this.page.getByTestId('recall2-filter-dropdown-orderStatus');
+    this.orderTypesButton = this.page.getByTestId('recall2-filter-dropdown-orderType');
+    this.paymentTypesButton = this.page.getByTestId('recall2-filter-dropdown-paymentType');
+    this.productLineButton = this.page.getByTestId('recall2-filter-dropdown-productLine');
+    this.moreFiltersButton = this.page.getByTestId('icon-button-More Filters');
+    this.searchTriggerButton = this.page.getByTestId('recall2-search-trigger');
+    this.topSearchInput = this.page.getByTestId('recall2-search-input');
     this.orderNumberBadges = this.page.getByText(/^#\d+$/);
-    this.searchDialog = this.page
-      .getByRole('dialog')
-      .filter({ has: this.page.getByRole('heading', { name: 'Search orders' }) });
-    this.searchDialogInput = this.searchDialog.getByRole('textbox', { name: 'Search' });
-    this.searchDialogSubmitButton = this.searchDialog.getByRole('button', {
-      name: 'Search',
-      exact: true,
-    });
-    this.searchDialogClearButton = this.searchDialog.getByRole('button', { name: '清除' });
-    this.searchDialogCloseButton = this.searchDialog.getByRole('button', { name: 'Close' });
-    this.activeFilterRemoveButtons = this.page.getByRole('button', {
-      name: /^Remove filter:/,
-    });
+    this.searchDialog = this.page.getByTestId('recall2-search-modal');
+    this.searchDialogDefaultInput = this.searchDialog.getByTestId('recall2-search-modal-input-default');
+    this.searchDialogNumberInput = this.searchDialog.getByTestId('recall2-search-modal-input-number');
+    this.searchDialogAmountInput = this.searchDialog.getByTestId('recall2-search-modal-input-amount');
+    this.searchDialogDefaultInputClearButton = this.searchDialog.getByTestId(
+      'recall2-search-modal-input-default-clear',
+    );
+    this.searchDialogNumberInputClearButton = this.searchDialog.getByTestId(
+      'recall2-search-modal-input-number-clear',
+    );
+    this.searchDialogAmountInputClearButton = this.searchDialog.getByTestId(
+      'recall2-search-modal-input-amount-clear',
+    );
+    this.searchDialogSubmitButton = this.searchDialog.getByTestId('recall2-search-modal-search-button');
+    this.searchDialogKeyboardCloseButton = this.page.getByTestId('pos-keyboard-button-{close}');
+    this.activeFilterTags = this.page.getByTestId(/^recall2-filter-tag-(?!label|value).+$/);
   }
 
   @step('页面操作：确认 Recall 页面已经加载完成')
@@ -69,7 +68,8 @@ export class RecallPage {
     await expect(this.newOrderButton).toBeVisible({ timeout: 15_000 });
     await expect(this.pagingButton).toBeVisible({ timeout: 15_000 });
     await expect(this.paymentStatusButton).toBeVisible({ timeout: 15_000 });
-    await expect(this.orderNumberBadges.first()).toBeVisible({ timeout: 15_000 });
+    await expect(this.topSearchInput).toBeVisible({ timeout: 15_000 });
+    await expect(this.moreFiltersButton).toBeVisible({ timeout: 15_000 });
   }
 
   @step((paymentStatus: string) => `页面操作：按支付状态筛选 ${paymentStatus}`)
@@ -99,20 +99,20 @@ export class RecallPage {
 
   @step('页面操作：打开手动输入搜索弹窗')
   async openManualSearchDialog(): Promise<void> {
-    await this.topSearchInput.click();
+    await this.searchTriggerButton.click();
     await expect(this.searchDialog).toBeVisible();
   }
 
   @step((tag: RecallManualSearchTag) => `页面操作：选择手动输入搜索标签 ${tag}`)
   async selectManualSearchTag(tag: RecallManualSearchTag): Promise<void> {
     await expect(this.searchDialog).toBeVisible();
-    await this.searchDialog.getByRole('button', { name: tag, exact: true }).click();
+    await this.searchDialog.getByTestId(this.resolveManualSearchTagTestId(tag)).click();
   }
 
-  @step((keyword: string) => `页面操作：输入手动搜索关键词 ${keyword}`)
+  @step((keyword: string) => `页面操作：输入手动搜索关键字 ${keyword}`)
   async fillManualSearchKeyword(keyword: string): Promise<void> {
     await expect(this.searchDialog).toBeVisible();
-    await this.searchDialogInput.fill(keyword);
+    await (await this.resolveVisibleSearchDialogInput()).fill(keyword);
   }
 
   @step('页面操作：提交手动输入搜索条件')
@@ -125,8 +125,8 @@ export class RecallPage {
   @step('页面操作：关闭手动输入搜索弹窗')
   async closeManualSearchDialog(): Promise<void> {
     if (await this.searchDialog.isVisible().catch(() => false)) {
-      if (await this.searchDialogCloseButton.isVisible().catch(() => false)) {
-        await this.searchDialogCloseButton.evaluate((closeButton) => {
+      if (await this.searchDialogKeyboardCloseButton.isVisible().catch(() => false)) {
+        await this.searchDialogKeyboardCloseButton.evaluate((closeButton) => {
           (closeButton as HTMLElement).click();
         });
       }
@@ -143,8 +143,8 @@ export class RecallPage {
   async clearAllSearchConditions(): Promise<void> {
     await this.clearManualSearchConditionIfNeeded();
 
-    while (await this.activeFilterRemoveButtons.count()) {
-      await this.activeFilterRemoveButtons.first().click();
+    while (await this.activeFilterTags.count()) {
+      await this.activeFilterTags.first().click();
     }
   }
 
@@ -154,14 +154,14 @@ export class RecallPage {
     return orderNumbers.map((orderNumber) => orderNumber.trim()).filter(Boolean);
   }
 
-  @step('页面操作：读取当前手动搜索关键词')
+  @step('页面操作：读取当前手动搜索关键字')
   async readManualSearchKeyword(): Promise<string> {
     return await this.topSearchInput.inputValue();
   }
 
   @step('页面操作：读取当前激活的筛选条件')
   async readActiveFilterTexts(): Promise<string[]> {
-    const filterTexts = await this.activeFilterRemoveButtons.allTextContents();
+    const filterTexts = await this.activeFilterTags.allTextContents();
     return filterTexts.map((filterText) => filterText.trim()).filter(Boolean);
   }
 
@@ -172,10 +172,14 @@ export class RecallPage {
   ): Promise<void> {
     await expect(filterButton).toBeVisible();
     await filterButton.click();
-    await this.page.getByRole('menuitem', { name: optionName, exact: true }).click();
+    await this.page
+      .getByTestId(/^recall2-filter-option-.+$/)
+      .filter({ hasText: optionName })
+      .first()
+      .click();
   }
 
-  @step('页面操作：如有手动搜索关键词则重置 Recall 页面状态')
+  @step('页面操作：如有手动搜索关键字则重置 Recall 页面状态')
   private async clearManualSearchConditionIfNeeded(): Promise<void> {
     const currentKeyword = await this.topSearchInput.inputValue().catch(() => '');
 
@@ -185,15 +189,17 @@ export class RecallPage {
 
     await this.openManualSearchDialog();
 
-    if (await this.searchDialogClearButton.isVisible().catch(() => false)) {
-      await this.searchDialogClearButton.evaluate((clearButton) => {
+    const visibleClearButton = await this.resolveVisibleSearchDialogClearButton();
+
+    if (visibleClearButton) {
+      await visibleClearButton.evaluate((clearButton) => {
         (clearButton as HTMLElement).click();
       });
     } else {
-      await this.searchDialogInput.fill('');
+      await (await this.resolveVisibleSearchDialogInput()).fill('');
     }
 
-    await expect(this.searchDialogInput).toHaveValue('');
+    await expect(await this.resolveVisibleSearchDialogInput()).toHaveValue('');
     await this.closeManualSearchDialog();
     await this.topSearchInput.evaluate((inputElement) => {
       const input = inputElement as HTMLInputElement;
@@ -202,5 +208,60 @@ export class RecallPage {
       input.dispatchEvent(new Event('change', { bubbles: true }));
     });
     await expect(this.topSearchInput).toHaveValue('');
+  }
+
+  private async resolveVisibleSearchDialogInput(): Promise<Locator> {
+    const inputCandidates = [
+      this.searchDialogDefaultInput,
+      this.searchDialogNumberInput,
+      this.searchDialogAmountInput,
+    ];
+
+    for (const inputCandidate of inputCandidates) {
+      if (await inputCandidate.isVisible().catch(() => false)) {
+        return inputCandidate;
+      }
+    }
+
+    throw new Error('Unable to find a visible manual search input in the Recall search dialog.');
+  }
+
+  private async resolveVisibleSearchDialogClearButton(): Promise<Locator | null> {
+    const clearButtonCandidates = [
+      this.searchDialogDefaultInputClearButton,
+      this.searchDialogNumberInputClearButton,
+      this.searchDialogAmountInputClearButton,
+    ];
+
+    for (const clearButtonCandidate of clearButtonCandidates) {
+      if (await clearButtonCandidate.isVisible().catch(() => false)) {
+        return clearButtonCandidate;
+      }
+    }
+
+    return null;
+  }
+
+  private resolveManualSearchTagTestId(tag: RecallManualSearchTag): string {
+    switch (tag) {
+      case 'Order No.':
+        return 'recall2-search-type-option-orderNo';
+      case 'Linked Order No.':
+        return 'recall2-search-type-option-linkedNo';
+      case 'Phone No.':
+        return 'recall2-search-type-option-phoneNo';
+      case 'Last 4 Digits':
+        return 'recall2-search-type-option-last4Digts';
+      case 'Payment Amount':
+        return 'recall2-search-type-option-total';
+      case 'Card Holder':
+        return 'recall2-search-type-option-cardHolder';
+      case 'Item Name':
+        return 'recall2-search-type-option-itemName';
+      case 'Table Name':
+        return 'recall2-search-type-option-tableName';
+      default:
+        throw new Error(`Unsupported Recall manual search tag: ${tag}`);
+    }
   }
 }
