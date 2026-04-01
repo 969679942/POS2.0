@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { AdminPage } from './admin.page';
 import { DeliveryPage } from './delivery.page';
+import { OrderDishesPage } from './order-dishes.page';
 import { PickUpPage } from './pick-up.page';
 import { RecallPage } from './recall.page';
 import { ReportPage } from './report.page';
@@ -63,6 +64,12 @@ export class HomePage {
     return new PickUpPage(this.page);
   }
 
+  @step('页面操作：点击 To Go 入口并进入点单页')
+  async clickToGo(): Promise<OrderDishesPage> {
+    await this.clickFunctionButton('To Go');
+    return new OrderDishesPage(this.page);
+  }
+
   @step('页面操作：点击 Report 入口并进入 Report 页面')
   async clickReport(): Promise<ReportPage> {
     await this.clickFunctionButton('Report');
@@ -84,7 +91,9 @@ export class HomePage {
   @step((buttonName: string) => `页面操作：点击主页中的 ${buttonName} 功能入口`)
   private async clickFunctionButton(buttonName: string): Promise<void> {
     const button = await this.resolveFunctionButton(buttonName);
-    await button.click();
+    await button.evaluate((buttonElement) => {
+      (buttonElement as HTMLElement).click();
+    });
   }
 
   @step((buttonName: string) => `页面操作：在主页中查找 ${buttonName} 功能入口，若未显示则展开更多菜单后查找`)
@@ -123,10 +132,7 @@ export class HomePage {
 
   @step((buttonName: string) => `页面操作：查找当前已显示的 ${buttonName} 功能入口`)
   private async findVisibleFunctionButton(buttonName: string): Promise<Locator | null> {
-    const buttons = this.appFrame.getByRole('button', {
-      name: buttonName,
-      exact: true,
-    });
+    const buttons = this.resolveFunctionButtonLocator(buttonName);
     const count = await buttons.count();
 
     for (let index = 0; index < count; index += 1) {
@@ -138,5 +144,39 @@ export class HomePage {
     }
 
     return null;
+  }
+
+  private resolveFunctionButtonLocator(buttonName: string): Locator {
+    const mappedTestId = this.resolveFunctionButtonTestId(buttonName);
+
+    if (mappedTestId) {
+      return this.appFrame.getByTestId(mappedTestId);
+    }
+
+    return this.appFrame.getByRole('button', {
+      name: buttonName,
+      exact: true,
+    });
+  }
+
+  private resolveFunctionButtonTestId(buttonName: string): string | null {
+    switch (buttonName) {
+      case 'Dine In':
+        return 'pos-ui-function-card-dine_in';
+      case 'Delivery':
+        return 'pos-ui-function-card-delivery';
+      case 'Pick Up':
+        return 'pos-ui-function-card-pickup';
+      case 'Report':
+        return 'pos-ui-function-card-report';
+      case 'Admin':
+        return 'pos-ui-function-card-admin';
+      case 'Recall':
+        return 'pos-ui-function-card-recall';
+      case 'To Go':
+        return 'pos-ui-function-card-togo';
+      default:
+        return null;
+    }
   }
 }
