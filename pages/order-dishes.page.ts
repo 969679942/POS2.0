@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { step } from '../utils/step';
+import { waitUntil } from '../utils/wait';
 import { HomePage } from './home.page';
 
 export class OrderDishesPage {
@@ -12,9 +13,6 @@ export class OrderDishesPage {
   private readonly countDialog: Locator;
   private readonly countDialogInput: Locator;
   private readonly countDialogConfirmButton: Locator;
-  private readonly weightDialog: Locator;
-  private readonly weightInput: Locator;
-  private readonly weightConfirmButton: Locator;
   private readonly priceDialog: Locator;
   private readonly priceInput: Locator;
   private readonly priceConfirmButton: Locator;
@@ -25,6 +23,7 @@ export class OrderDishesPage {
   private readonly cartButton: Locator;
   private readonly cartBadge: Locator;
   private readonly saveOrderButton: Locator;
+  private readonly priceSummaryToggle: Locator;
 
   constructor(private readonly page: Page) {
     this.appFrame = this.page.frameLocator('iframe[data-wujie-id="orderDishes"]');
@@ -42,9 +41,6 @@ export class OrderDishesPage {
     this.countDialogConfirmButton = this.countDialog.getByRole('button', {
       name: /^(Confirm|确认)$/,
     });
-    this.weightDialog = this.appFrame.getByRole('dialog', { name: 'Enter Weight' });
-    this.weightInput = this.weightDialog.getByRole('textbox', { name: 'Weight' });
-    this.weightConfirmButton = this.weightDialog.getByRole('button', { name: 'Confirm' });
     this.priceDialog = this.appFrame.getByRole('dialog', { name: 'Enter Price' });
     this.priceInput = this.priceDialog.getByRole('textbox', { name: 'Price' });
     this.priceConfirmButton = this.priceDialog.getByRole('button', { name: 'Confirm' });
@@ -63,6 +59,9 @@ export class OrderDishesPage {
     this.cartButton = this.appFrame.getByRole('button', { name: 'Cart' });
     this.cartBadge = this.appFrame.locator('[data-testid="cart-badge"]');
     this.saveOrderButton = this.appFrame.locator('[data-testid="bottom-button-saveOrderBtn"]');
+    this.priceSummaryToggle = this.appFrame.locator(
+      '[data-test-id="shared-order-price-summary-toggle"], [data-testid="shared-order-price-summary-toggle"]',
+    );
   }
 
   @step('页面操作：确认点餐页已加载')
@@ -122,19 +121,30 @@ export class OrderDishesPage {
 
   @step('页面操作：确认重量输入弹窗可见')
   async expectWeightDialogVisible(): Promise<void> {
-    await expect(this.weightDialog).toBeVisible();
+    await expect(this.resolveWeightDialog()).toBeVisible({ timeout: 15_000 });
   }
 
   @step((weight: number) => `页面操作：输入重量 ${weight}`)
   async enterWeight(weight: number): Promise<void> {
+    await this.enterWeightInDialog(weight);
+  }
+
+  /**
+   * 称重弹窗：先聚焦重量输入框再填写，避免未激活输入导致填值失败。
+   */
+  @step((weight: number) => `页面操作：在称重弹窗中点击重量输入并填写 ${weight}`)
+  async enterWeightInDialog(weight: number): Promise<void> {
     await this.expectWeightDialogVisible();
-    await this.weightInput.fill(String(weight));
+    const input = this.resolveWeightInput();
+    await input.click();
+    await input.fill(String(weight));
   }
 
   @step('页面操作：确认重量输入')
   async confirmWeightDialog(): Promise<void> {
     await this.expectWeightDialogVisible();
-    await this.weightConfirmButton.click();
+    await this.resolveWeightConfirmButton().click();
+    await expect(this.resolveWeightDialog()).toBeHidden({ timeout: 15_000 });
   }
 
   @step('页面操作：确认价格输入弹窗可见')
@@ -215,8 +225,91 @@ export class OrderDishesPage {
 
   @step('页面操作：保存订单')
   async saveOrder(): Promise<HomePage> {
+    await this.saveOrderButton.scrollIntoViewIfNeeded();
     await this.saveOrderButton.click();
+    await waitUntil(
+      async () => this.page.url(),
+      (url) => !/#orderDishes/.test(url),
+      {
+        timeout: 30_000,
+        interval: 200,
+        message:
+          '保存订单后页面仍停留在点餐（URL 仍含 #orderDishes）。请确认 Save 已生效、无未关弹窗或阻塞提示。',
+      },
+    );
     return new HomePage(this.page);
+  }
+
+  @step('页面读取：读取点餐页价格汇总中的 Total 金额文本')
+  async readPriceSummaryTotalText(): Promise<string> {
+    await this.expectLoaded();
+
+    const summaryRoot = this.priceSummaryToggle.first();
+    await expect(summaryRoot).toBeVisible({ timeout: 15_000 });
+
+    const dollarCell = summaryRoot.getByText(/^\$[\d,.]+$/);
+    if (!(await dollarCell.first().isVisible().catch(() => false))) {
+      await summaryRoot.click();
+    }
+
+    const directRows = summaryRoot.locator(':scope > div');
+    const rowCount = await directRows.count();
+
+    for (let index = 0; index < rowCount; index += 1) {
+      const row = directRows.nth(index);
+      const labelText = (await row.locator('span').first().textContent())?.trim();
+
+      if (labelText === 'Total') {
+        const valueText = (await row.locator('span').nth(1).textContent())?.trim() ?? '';
+
+        if (!valueText) {
+          throw new Error('点餐页价格汇总中 Total 对应金额为空');
+        }
+
+        return valueText;
+      }
+    }
+
+    throw new Error('未在点餐页价格汇总区域解析到 Total 行');
+  }
+
+  /**
+   * 称重弹窗：不同环境 accessible name / 根节点不同（`role="dialog"` 或 `pos-ui-modal`），在此集中兼容。
+   */
+  private resolveWeightDialog(): Locator {
+    // 实际产品弹窗名为「Weight」（见 trace），旧版为「Enter Weight」；中文环境见注释内模式。
+    const titlePattern = /^(Enter\s*)?Weight$|Enter\s*Weight|输入重量|称重|重量输入/i;
+
+    return this.appFrame
+      .getByRole('dialog', { name: titlePattern })
+      .or(this.appFrame.locator('[data-testid="pos-ui-modal"]').filter({ hasText: titlePattern }))
+      .or(
+        this.appFrame
+          .locator('[role="dialog"]')
+          .filter({ hasNot: this.countDialog })
+          .filter({ hasText: titlePattern })
+          .first(),
+      );
+  }
+
+  private resolveWeightInput(): Locator {
+    const root = this.resolveWeightDialog();
+    // 当前 POS 称重弹窗内 textbox 的 accessible name 为当前值（如「0」），非「Weight」。
+    return root
+      .getByRole('textbox')
+      .first()
+      .or(root.getByRole('textbox', { name: 'Weight' }))
+      .or(root.getByRole('textbox', { name: /重量|Weight/i }))
+      .or(root.getByPlaceholder(/weight|重量|lb|lbs|磅/i))
+      .or(root.locator('input[type="text"], input[type="tel"], input[type="number"]').first());
+  }
+
+  private resolveWeightConfirmButton(): Locator {
+    const root = this.resolveWeightDialog();
+    return root
+      .getByRole('button', { name: /^Confirm$/i })
+      .or(root.getByRole('button', { name: /^确认$/ }))
+      .or(root.getByRole('button', { name: /Confirm|确认/ }));
   }
 
   private resolveTableNumberButton(tableNumber: string): Locator {

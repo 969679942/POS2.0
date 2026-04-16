@@ -14,10 +14,23 @@ import { waitUntil } from '../utils/wait';
 export class HomePage {
   private readonly appFrame: ReturnType<Page['frameLocator']>;
   private readonly openDrawerButton: Locator;
+  /** 主页员工 Boss 入口（优先按钮语义，回退精确文案） */
+  private readonly bossClockInEntry: Locator;
+  /** 点击 Boss 后出现在应用 iframe 内的欢迎/打卡弹层（勿与侧栏「Clock In/Out」卡片混淆） */
+  private readonly bossClockInWelcomeDialog: Locator;
+  /** 仅位于上述 dialog 内的「上班打卡」按钮（可访问名常含图标前缀，如 ClockedInIcon Clock In） */
+  private readonly clockInOnBossPanel: Locator;
 
   constructor(private readonly page: Page) {
     this.appFrame = this.page.frameLocator('#newLoginContainer iframe');
     this.openDrawerButton = this.appFrame.getByRole('button', { name: 'Open drawer' });
+    this.bossClockInEntry = this.appFrame
+      .getByRole('button', { name: /^Boss$/i })
+      .or(this.appFrame.getByText('Boss', { exact: true }));
+    this.bossClockInWelcomeDialog = this.appFrame.getByRole('dialog').filter({ hasText: /Welcome/i });
+    this.clockInOnBossPanel = this.bossClockInWelcomeDialog
+      .getByRole('button', { name: /Clock\s*In/i })
+      .filter({ hasNotText: /Clock\s*In\s*\/\s*Out/i });
   }
 
   @step('页面操作：打开 POS 首页')
@@ -34,6 +47,80 @@ export class HomePage {
   @step('页面操作：确认员工已经进入 POS 主页状态')
   async expectEmployeeReady(): Promise<void> {
     await expect(this.resolveFunctionButton('Dine In')).resolves.toBeDefined();
+  }
+
+  @step('页面操作：确认主页已显示 Boss 打卡入口')
+  async expectBossClockInEntryVisible(): Promise<void> {
+    await expect(this.bossClockInEntry.first()).toBeVisible({ timeout: 15_000 });
+  }
+
+  @step('页面读取：判断 Boss 区域下方是否已出现 Clocked in at 时间提示')
+  async isClockedInAtAlreadyShownBelowBoss(): Promise<boolean> {
+    const bossRegionWithClockedIn = this.appFrame
+      .locator('div, section, article')
+      .filter({ has: this.bossClockInEntry })
+      .filter({ hasText: /Clocked in at/i })
+      .first();
+    if (await bossRegionWithClockedIn.isVisible().catch(() => false)) {
+      return true;
+    }
+    return await this.appFrame
+      .getByText(/^Clocked in at\b/i)
+      .first()
+      .isVisible()
+      .catch(() => false);
+  }
+
+  @step('页面操作：点击 Boss 打开打卡相关弹层')
+  async clickBossToOpenClockPanel(): Promise<void> {
+    await this.bossClockInEntry.first().click();
+  }
+
+  @step('页面操作：确认应用 iframe 内 Boss 弹层已就绪（可 Clock In，或已上班显示 Clock Out / 主页 Clocked in at）')
+  async expectBossClockDialogReady(): Promise<void> {
+    await expect(this.bossClockInWelcomeDialog).toBeVisible({ timeout: 15_000 });
+    const clockInBtn = this.clockInOnBossPanel.first();
+    const clockOutBtn = this.bossClockInWelcomeDialog.getByRole('button', { name: /Clock\s*Out/i });
+    const clockedOnHome = this.appFrame.getByText(/Clocked in at/i);
+    await waitUntil(
+      async () =>
+        (await clockInBtn.isVisible().catch(() => false)) ||
+        (await clockOutBtn.first().isVisible().catch(() => false)) ||
+        (await clockedOnHome.first().isVisible().catch(() => false)),
+      (ok) => ok,
+      {
+        timeout: 15_000,
+        message:
+          'Boss 弹层未就绪：未找到 Clock In、未找到 Clock Out，且未见 Clocked in at（可能尚未打开弹层或文案变更）',
+      },
+    );
+  }
+
+  @step('页面操作：若 iframe 内弹层存在 Clock In 则点击完成上班打卡（已上班则跳过）')
+  async clickClockInOnBossPanelIfVisible(): Promise<void> {
+    const clockIn = this.clockInOnBossPanel.first();
+    if (await clockIn.isVisible().catch(() => false)) {
+      await clockIn.evaluate((el) => {
+        (el as HTMLElement).click();
+      });
+    }
+  }
+
+  @step('页面操作：确认 Boss 区域附近出现 Clocked in at 时间提示')
+  async expectClockedInAtLineVisible(): Promise<void> {
+    const nearBoss = this.appFrame
+      .locator('div, section, article')
+      .filter({ has: this.bossClockInEntry })
+      .filter({ hasText: /Clocked in at/i })
+      .first();
+    const clockedInAnywhere = this.appFrame.getByText(/Clocked in at/i).first();
+    await waitUntil(
+      async () =>
+        (await nearBoss.isVisible().catch(() => false)) ||
+        (await clockedInAnywhere.isVisible().catch(() => false)),
+      (ok) => ok,
+      { timeout: 25_000, message: '未检测到 Clocked in at 打卡成功提示' },
+    );
   }
 
   @step('页面操作：确认主页的核心功能入口已经可用')

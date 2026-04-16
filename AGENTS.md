@@ -16,7 +16,7 @@ This repository is a maintainable Playwright + TypeScript UI automation project 
 - Prefer semantic locators such as `getByRole`, `getByLabel`, and `getByText`.
 - Do not default to brittle CSS chains, nth-child selectors, or XPath.
 - Do not use `waitForTimeout` in tests or helpers.
-- Prefer `utils/wait.ts` `waitUntil()` for condition polling that may retry multiple times. Avoid `expect(...).toPass()` and `expect.poll()` in page objects, flows, helpers, and tests when they would create noisy intermediate failures in reports. Assert only the final settled result.
+- Prefer `utils/wait.ts` `waitUntil()` for condition polling that may retry multiple times（未传 `timeout` 时默认 **10 秒**，见 `DEFAULT_WAIT_UNTIL_TIMEOUT_MS`）。Avoid `expect(...).toPass()` and `expect.poll()` in page objects, flows, helpers, and tests when they would create noisy intermediate failures in reports. Assert only the final settled result.
 - Every method in `pages/` and `flows/` must use Chinese `@step(...)` descriptions for report display.
 - Do not keep page/flow action descriptions only in comments; convert those descriptions into executable report steps.
 - Every `describe` and `test` title must be written in Chinese.
@@ -68,8 +68,16 @@ test(
 - Always enter the app from `http://192.168.0.89:22080/kpos/front2/myhome.html`, then navigate through the UI flow to the target page.
 - Apply the same rule to every in-app page, not only the order-dishes page.
 
+## 用例失败时的调试约定（Agent）
+
+- 修改或新增 Playwright 用例后**应实际执行**相关 `npx playwright test …`，不得以「理论上应通过」代替验证。
+- 若失败：对照报告中的**中文步骤**与 `test-results/**/error-context.md` 快照，判断当前步骤期望的 UI 是否已出现。
+- **优先检查定位**：是否应落在 `#newLoginContainer iframe` 内、是否与侧栏等同名控件混淆、是否因已打卡/已登录等状态导致按钮文案从 Clock In 变为 Clock Out。
+- 在 `pages/` 中**集中修正定位**（优先 `data-testid`，其次 `getByRole` / 文案），再重新运行同一用例直至通过或明确卡点（环境不可用、产品变更等）。
+
 ## Test Design
 
+- **等待机制**：`playwright.config.ts` 中 `expect.timeout` 为 **30_000 ms**；`utils/wait.ts` 中 `waitUntil` 未传 `timeout` 时默认 **10_000 ms**（`DEFAULT_WAIT_UNTIL_TIMEOUT_MS`）。单条用例总超时由同文件 `timeout` 单独配置；个别长流程用例可用 `test.setTimeout` 放大整条用例上限。
 - Smoke tests should validate stable availability signals only.
 - E2E tests should express business intent instead of click-by-click scripts.
 - Add stronger semantic locators or test ids before introducing fragile selectors.

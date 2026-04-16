@@ -12,6 +12,8 @@ export class SelectTablePage {
   private readonly areaRadios: Locator;
   private readonly tableNodes: Locator;
   private readonly availableTableNodes: Locator;
+  /** List 视图：桌台为 button，内含 Seat2Icon；勿用 role name 匹配（img alt 可能不计入 button 可访问名） */
+  private readonly listViewTableButtons: Locator;
 
   constructor(private readonly page: Page) {
     this.backButton = this.page.getByRole('button', { name: 'Back' });
@@ -20,6 +22,9 @@ export class SelectTablePage {
     this.availableTableNodes = this.page.locator(
       'article.table-node.table-node-available:not([class*="table-node-order-"])',
     );
+    this.listViewTableButtons = this.page.getByRole('button').filter({
+      has: this.page.getByRole('img', { name: /Seat2Icon/i }),
+    });
   }
 
   @step('页面操作：确认选桌页面已经加载完成')
@@ -37,6 +42,18 @@ export class SelectTablePage {
 
     for (let index = 0; index < availableTableCount; index += 1) {
       availableTables.push(this.availableTableNodes.nth(index));
+    }
+
+    if (availableTables.length > 0) {
+      return availableTables;
+    }
+
+    const listCount = await this.listViewTableButtons.count();
+    for (let index = 0; index < listCount; index += 1) {
+      const row = this.listViewTableButtons.nth(index);
+      if (await row.isVisible()) {
+        availableTables.push(row);
+      }
     }
 
     return availableTables;
@@ -80,9 +97,16 @@ export class SelectTablePage {
       }),
     });
 
-    await expect(table.first()).toBeVisible();
+    if ((await table.count()) > 0) {
+      await expect(table.first()).toBeVisible();
+      return table.first();
+    }
 
-    return table.first();
+    const listRow = this.listViewTableButtons.filter({
+      has: this.page.getByText(new RegExp(`^${escapedTableNumber}$`)),
+    });
+    await expect(listRow.first()).toBeVisible();
+    return listRow.first();
   }
 
   @step('页面操作：点击指定桌台卡片并弹出人数选择框')
@@ -94,12 +118,18 @@ export class SelectTablePage {
 
   @step('页面操作：读取桌台卡片中的桌号')
   async readTableNumber(table: Locator): Promise<string> {
-    const tableNumber = (await table.locator('.table-node-title').textContent())?.trim();
-
-    if (!tableNumber) {
-      throw new Error('Unable to read the table number from the table card.');
+    const fromCard = (await table.locator('.table-node-title').textContent())?.trim();
+    if (fromCard) {
+      return fromCard;
     }
 
-    return tableNumber;
+    const fromListRow = (
+      await table.locator(':scope > *').first().locator(':scope > *').first().textContent()
+    )?.trim();
+    if (fromListRow) {
+      return fromListRow;
+    }
+
+    throw new Error('Unable to read the table number from the table card or list row.');
   }
 }

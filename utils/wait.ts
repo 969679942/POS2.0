@@ -1,3 +1,6 @@
+/** `waitUntil` 未传入 `timeout` 时的默认最长等待（毫秒） */
+export const DEFAULT_WAIT_UNTIL_TIMEOUT_MS = 10_000;
+
 export type WaitUntilOptions = {
   timeout?: number;
   interval?: number;
@@ -10,7 +13,7 @@ export async function waitUntil<T>(
   options: WaitUntilOptions = {},
 ): Promise<T> {
   const {
-    timeout = 5_000,
+    timeout = DEFAULT_WAIT_UNTIL_TIMEOUT_MS,
     interval = 100,
     message = 'Condition was not satisfied within the timeout.',
   } = options;

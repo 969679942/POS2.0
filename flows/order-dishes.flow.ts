@@ -41,9 +41,9 @@ export class OrderDishesFlow {
   ): Promise<void> {
     await orderDishesPage.expectLoaded();
     await orderDishesPage.clickDish(dishName);
-    await this.adjustQuantityIfNeeded(orderDishesPage, quantity);
-    await orderDishesPage.enterWeight(weight);
+    await orderDishesPage.enterWeightInDialog(weight);
     await orderDishesPage.confirmWeightDialog();
+    await this.adjustQuantityIfNeeded(orderDishesPage, quantity);
   }
 
   @step('业务步骤：添加套餐菜品到购物车')

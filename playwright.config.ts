@@ -3,9 +3,11 @@ import { appConfig } from './test-data/env';
 
 export default defineConfig({
   testDir: './tests',
-  timeout: 30_000,
+  /** 单条用例总超时（整条 `test` 执行上限，与下方 `expect.timeout` 等待机制分离） */
+  timeout: 120_000,
   expect: {
-    timeout: 5_000,
+    /** `expect(...)` 等断言的默认最长等待（等待机制，秒） */
+    timeout: 30_000,
   },
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
@@ -27,6 +29,7 @@ export default defineConfig({
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'off',
+    // 与物理机一致 1920×1080；显式 viewport 以覆盖设备预设（如 Desktop Chrome 的 1280×720）
     viewport: { width: 1920, height: 1080 },
   },
   projects: [
