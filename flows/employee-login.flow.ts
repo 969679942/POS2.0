@@ -12,6 +12,7 @@ export class EmployeeLoginFlow {
     await employeeLoginPage.expectVisible();
     await employeeLoginPage.fillPassword(password);
     await employeeLoginPage.clickConfirm();
+    await employeeLoginPage.expectPasscodeDismissedAfterLogin();
     await homePage.expectEmployeeReady();
 
     return homePage;

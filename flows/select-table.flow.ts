@@ -15,7 +15,7 @@ export class SelectTableFlow {
   ): Promise<TableSelectionResult> {
     await selectTablePage.expectLoaded();
 
-    const availableTables = await selectTablePage.getAvailableTables();
+    const availableTables = await selectTablePage.trySwitchAreasAndListAvailableTables();
     const selectedTable = availableTables[0];
 
     if (!selectedTable) {
@@ -72,6 +72,23 @@ export class SelectTableFlow {
     await orderDishesPage.expectLoaded();
     return orderDishesPage;
   }
+
+  @step(
+    (_guestCountDialogPage: GuestCountDialogPage, min: number, max: number) =>
+      `业务步骤：在人数弹窗中随机选择 ${min} 至 ${max} 位客人并进入点餐页`,
+  )
+  async selectRandomGuestCountAndEnterOrderDishes(
+    guestCountDialogPage: GuestCountDialogPage,
+    min: number,
+    max: number,
+  ): Promise<{ orderDishesPage: OrderDishesPage; guestCount: number }> {
+    const guestCount = Math.floor(Math.random() * (max - min + 1)) + min;
+    const orderDishesPage = await this.selectGuestCountAndEnterOrderDishes(
+      guestCountDialogPage,
+      guestCount,
+    );
+    return { orderDishesPage, guestCount };
+  }
 }
 
 export async function selectAnyAvailableTable(
@@ -102,5 +119,18 @@ export async function selectGuestCountAndEnterOrderDishes(
   return await selectTableFlow.selectGuestCountAndEnterOrderDishes(
     guestCountDialogPage,
     guestCount,
+  );
+}
+
+export async function selectRandomGuestCountAndEnterOrderDishes(
+  guestCountDialogPage: GuestCountDialogPage,
+  min: number,
+  max: number,
+): Promise<{ orderDishesPage: OrderDishesPage; guestCount: number }> {
+  const selectTableFlow = new SelectTableFlow();
+  return await selectTableFlow.selectRandomGuestCountAndEnterOrderDishes(
+    guestCountDialogPage,
+    min,
+    max,
   );
 }

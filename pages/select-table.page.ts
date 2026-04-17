@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { GuestCountDialogPage } from './guest-count-dialog.page';
 import { step } from '../utils/step';
+import { waitUntil } from '../utils/wait';
 
 export type SelectedTableRecord = {
   areaName: string;
@@ -29,17 +30,42 @@ export class SelectTablePage {
 
   @step('页面操作：确认选桌页面已经加载完成')
   async expectLoaded(): Promise<void> {
-    await expect(this.page).toHaveURL(/#tableV2/);
+    await expect(this.page).toHaveURL(/#table[_-]?v2/i);
     await expect(this.backButton).toBeVisible();
+    await waitUntil(
+      async () => {
+        const loading = this.page.getByText(/loading tables/i);
+        if ((await loading.count()) === 0) {
+          return true;
+        }
+        return !(await loading.first().isVisible().catch(() => false));
+      },
+      (done) => done,
+      { timeout: 60_000, message: '选桌页长时间处于 Loading tables 状态' },
+    );
+    await waitUntil(
+      async () =>
+        (await this.tableNodes.count()) > 0 || (await this.listViewTableButtons.count()) > 0,
+      (ok) => ok,
+      {
+        timeout: 60_000,
+        interval: 400,
+        message: '选桌页未渲染出桌台列表（无 table-node 或 List 行）',
+      },
+    );
   }
 
   @step('页面操作：读取当前区域下所有空桌')
   async getAvailableTables(): Promise<Locator[]> {
     await this.expectLoaded();
+    return await this.listAvailableTableLocators();
+  }
 
-    const availableTableCount = await this.availableTableNodes.count();
+  /** 假定已在选桌页，不重复校验 URL；供跨区域重试收集空桌 */
+  async listAvailableTableLocators(): Promise<Locator[]> {
     const availableTables: Locator[] = [];
 
+    const availableTableCount = await this.availableTableNodes.count();
     for (let index = 0; index < availableTableCount; index += 1) {
       availableTables.push(this.availableTableNodes.nth(index));
     }
@@ -57,6 +83,27 @@ export class SelectTablePage {
     }
 
     return availableTables;
+  }
+
+  /** 当前区域无空桌时依次切换区域并重扫，仍无则返回空数组 */
+  @step('页面操作：切换选桌区域直至找到空桌或已遍历全部区域')
+  async trySwitchAreasAndListAvailableTables(): Promise<Locator[]> {
+    let tables = await this.listAvailableTableLocators();
+    if (tables.length > 0) {
+      return tables;
+    }
+    const radioCount = await this.page.getByRole('radio').count();
+    for (let index = 0; index < radioCount; index += 1) {
+      const radio = this.page.getByRole('radio').nth(index);
+      if ((await radio.getAttribute('aria-checked')) !== 'true') {
+        await radio.click();
+      }
+      tables = await this.listAvailableTableLocators();
+      if (tables.length > 0) {
+        return tables;
+      }
+    }
+    return tables;
   }
 
   @step((areaName: string) => `页面操作：切换到区域 ${areaName}`)

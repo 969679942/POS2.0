@@ -41,4 +41,9 @@ export class EmployeeLoginPage {
       (button as HTMLElement).click();
     });
   }
+
+  @step('页面操作：确认员工口令提交后登录界面已关闭')
+  async expectPasscodeDismissedAfterLogin(): Promise<void> {
+    await expect(this.passcodeHeading).toBeHidden({ timeout: 25_000 });
+  }
 }

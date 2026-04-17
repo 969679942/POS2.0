@@ -75,8 +75,24 @@ export class OrderDishesFlow {
       }
     }
 
+    await orderDishesPage.satisfyMandatoryComboSelectionsIfNeeded();
     await orderDishesPage.confirmComboDialog();
     await this.adjustQuantityIfNeeded(orderDishesPage, quantity);
+  }
+
+  @step('业务步骤：在点单页搜索关键字并在结果中添加一条规格菜')
+  async searchAndAddSpecDish(
+    orderDishesPage: OrderDishesPage,
+    keyword: string,
+    dishButtonName: string,
+    specifications: string[],
+    quantity: number = 1,
+  ): Promise<void> {
+    await orderDishesPage.expectLoaded();
+    await orderDishesPage.openDishSearchPanel();
+    await orderDishesPage.applyDishSearchKeyword(keyword);
+    await orderDishesPage.expectDishSearchResultVisible(dishButtonName);
+    await this.addSpecDish(orderDishesPage, dishButtonName, specifications, quantity);
   }
 
   @step('业务步骤：添加规格菜品到购物车')
@@ -88,7 +104,6 @@ export class OrderDishesFlow {
   ): Promise<void> {
     await orderDishesPage.expectLoaded();
     await orderDishesPage.clickDish(dishName);
-    await this.adjustQuantityIfNeeded(orderDishesPage, quantity);
 
     if (await orderDishesPage.isSpecificationDialogVisible()) {
       for (const spec of specifications) {
@@ -97,6 +112,8 @@ export class OrderDishesFlow {
 
       await orderDishesPage.confirmSpecificationDialog();
     }
+
+    await this.adjustQuantityIfNeeded(orderDishesPage, quantity);
   }
 
   @step('业务步骤：添加开价菜品到购物车')
@@ -201,6 +218,17 @@ export async function addSpecDish(
 ): Promise<void> {
   const flow = new OrderDishesFlow();
   await flow.addSpecDish(orderDishesPage, dishName, specifications, quantity);
+}
+
+export async function searchAndAddSpecDish(
+  orderDishesPage: OrderDishesPage,
+  keyword: string,
+  dishButtonName: string,
+  specifications: string[],
+  quantity: number = 1,
+): Promise<void> {
+  const flow = new OrderDishesFlow();
+  await flow.searchAndAddSpecDish(orderDishesPage, keyword, dishButtonName, specifications, quantity);
 }
 
 export async function addOpenPriceDish(

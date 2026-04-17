@@ -7,7 +7,6 @@ import {
   selectGuestCountAndEnterOrderDishes,
 } from '../../flows/select-table.flow';
 import { test } from '../../fixtures/test.fixture';
-import { RecallPage } from 'pages/recall.page';
 
 test.describe('点餐冒烟测试', () => {
   test(
@@ -54,10 +53,9 @@ test.describe('点餐冒烟测试', () => {
             普通菜2: 2,
           },
         },
-        3,
+        1,
       );
       await orderDishesPage.saveOrder();
-      const recallPage = homePage.clickRecall();  
     },
   );
 });

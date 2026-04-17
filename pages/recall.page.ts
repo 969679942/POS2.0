@@ -87,12 +87,25 @@ export class RecallPage {
   constructor(private readonly page: Page) {
     this.newOrderButton = this.page.getByTestId('recall2-header-new-order');
     this.pagingButton = this.page.getByTestId('recall2-header-paging');
-    this.paymentStatusButton = this.page.getByTestId('recall2-filter-dropdown-paymentStatus');
-    this.orderStatusButton = this.page.getByTestId('recall2-filter-dropdown-orderStatus');
-    this.orderTypesButton = this.page.getByTestId('recall2-filter-dropdown-orderType');
-    this.paymentTypesButton = this.page.getByTestId('recall2-filter-dropdown-paymentType');
-    this.productLineButton = this.page.getByTestId('recall2-filter-dropdown-productLine');
-    this.moreFiltersButton = this.page.getByTestId('icon-button-More Filters');
+    /** 同 testid 可能出现双行筛选；Playwright 匹配顺序里前者常为隐藏占位，取最后一个可见实例 */
+    this.paymentStatusButton = this.page
+      .locator('button[data-testid="recall2-filter-dropdown-paymentStatus"]')
+      .last();
+    this.orderStatusButton = this.page
+      .locator('button[data-testid="recall2-filter-dropdown-orderStatus"]')
+      .last();
+    this.orderTypesButton = this.page
+      .locator('button[data-testid="recall2-filter-dropdown-orderType"]')
+      .last();
+    this.paymentTypesButton = this.page
+      .locator('button[data-testid="recall2-filter-dropdown-paymentType"]')
+      .last();
+    this.productLineButton = this.page
+      .locator('button[data-testid="recall2-filter-dropdown-productLine"]')
+      .last();
+    this.moreFiltersButton = this.page
+      .getByTestId('icon-button-More Filters')
+      .or(this.page.getByRole('button', { name: /^More Filters$/i }));
     this.searchTriggerButton = this.page.getByTestId('recall2-search-trigger');
     this.topSearchInput = this.page.getByTestId('recall2-search-input');
     this.orderNumberBadges = this.page.getByText(/^#\d+$/);
@@ -122,7 +135,8 @@ export class RecallPage {
     await expect(this.newOrderButton).toBeVisible({ timeout: 15_000 });
     await expect(this.pagingButton).toBeVisible({ timeout: 15_000 });
     await expect(this.paymentStatusButton).toBeVisible({ timeout: 15_000 });
-    await expect(this.topSearchInput).toBeVisible({ timeout: 15_000 });
+    /** 新版 Recall 可能仅展示「Search orders」入口，输入框在弹层内，故以触发器为壳加载信号 */
+    await expect(this.searchTriggerButton).toBeVisible({ timeout: 35_000 });
     await expect(this.moreFiltersButton).toBeVisible({ timeout: 15_000 });
   }
 
@@ -208,9 +222,29 @@ export class RecallPage {
     return orderNumbers.map((orderNumber) => orderNumber.trim()).filter(Boolean);
   }
 
+  @step('页面读取：轮询直到 Recall 列表渲染出至少一个订单号后返回列表')
+  async readVisibleOrderNumbersWhenNonEmpty(
+    options: { timeout?: number; interval?: number } = {},
+  ): Promise<string[]> {
+    const { timeout = 25_000, interval = 400 } = options;
+    return await waitUntil(
+      async () => await this.readVisibleOrderNumbers(),
+      (nums) => nums.length > 0,
+      {
+        timeout,
+        interval,
+        message: 'Recall 订单列表未在预期时间内渲染出至少一个订单号',
+      },
+    );
+  }
+
   @step('页面读取：读取当前手动搜索关键字')
   async readManualSearchKeyword(): Promise<string> {
-    return await this.topSearchInput.inputValue();
+    const inline = this.page.getByTestId('recall2-search-input').first();
+    if ((await inline.count()) > 0 && (await inline.isVisible().catch(() => false))) {
+      return await inline.inputValue();
+    }
+    return '';
   }
 
   @step('页面读取：读取当前激活的筛选条件')
@@ -403,10 +437,24 @@ export class RecallPage {
         selectText(dialogElement, '[class*="_number_"]') ??
         normalizeOptionalText(dialogElement.textContent?.match(/#\d+/)?.[0]) ??
         '';
-      const paymentStatus = selectText(dialogElement, '[class*="_statusTag_"]');
+      let paymentStatus =
+        selectText(dialogElement, '[class*="_statusTag_"]') ?? selectText(dialogElement, '[class*="_statusTag"]');
+      const statusRegion = dialogElement.querySelector('[class*="_status_"]');
+      if (!paymentStatus && statusRegion) {
+        paymentStatus =
+          selectText(statusRegion, 'span') ?? normalizeOptionalText(statusRegion.textContent?.replace(/\s+/g, ' '));
+      }
+      if (!paymentStatus) {
+        const statusMatch = dialogElement.textContent?.match(
+          /\b(Unpaid|Paid|Semi-Paid|Semi Paid|Pending|Offline Payment)\b/i,
+        );
+        paymentStatus = statusMatch ? statusMatch[1] : null;
+      }
 
       const headerChipTexts = uniqueValues(
-        Array.from(dialogElement.querySelectorAll('[class*="_header_1ej2d_"] button, [class*="_actionButtons_"] button'))
+        Array.from(
+          dialogElement.querySelectorAll('[class*="_header_"] button, [class*="_actionButtons_"] button'),
+        )
           .map((button) => cleanText(button.textContent))
           .filter(Boolean),
       );
@@ -515,7 +563,12 @@ export class RecallPage {
             }, [])
         : [];
 
-      const items = Array.from(dialogElement.querySelectorAll('[data-testid="pos-ui-dish-item"]')).reduce<RecallOrderItem[]>(
+      const dishRoots = dedupeElements(
+        Array.from(
+          dialogElement.querySelectorAll('[data-testid="pos-ui-dish-item"], [class*="_dishItem_"]'),
+        ),
+      );
+      const items = dishRoots.reduce<RecallOrderItem[]>(
         (records, dishElement) => {
           const sentTime =
             selectText(dishElement, '[class*="_sentText_"]') ??
@@ -585,25 +638,85 @@ export class RecallPage {
         dialogElement.querySelector('[data-testid="shared-order-price-summary-toggle"]') ??
         dialogElement.querySelector('[class*="_container_1jzox_"]') ??
         dialogElement.querySelector('[class*="_container_"][class*="1jzox"]');
-      const priceSummary = priceSummaryContainer
-        ? Array.from(priceSummaryContainer.children).reduce<Record<string, string>>((summary, rowElement) => {
-            const spanTexts = Array.from(rowElement.querySelectorAll('span'))
-              .map((node) => cleanText(node.textContent))
-              .filter(Boolean);
-            const label =
-              spanTexts[0] ??
-              selectText(rowElement, '[class*="_label_1jzox_"]') ??
-              selectText(rowElement, '[class*="_totalLabel_1jzox_"]');
-            const value =
-              spanTexts.length > 1 ? spanTexts[spanTexts.length - 1] : null;
+      const mergePriceSummaryFallback = (container: Element, summary: Record<string, string>): void => {
+        const labelValueRows = Array.from(
+          container.querySelectorAll('[class*="_row_"], [class*="_label_"]'),
+        ).map((node) => node.closest('[class*="_row_"]') ?? node.parentElement ?? node);
 
-            if (label && value && label !== value) {
-              summary[label] = value;
-            }
+        for (const rowElement of dedupeElements(labelValueRows)) {
+          const spanTexts = Array.from(rowElement.querySelectorAll('span'))
+            .map((node) => cleanText(node.textContent))
+            .filter(Boolean);
+          const label =
+            spanTexts[0] ??
+            selectText(rowElement, '[class*="_label_"]') ??
+            selectText(rowElement, '[class*="_totalLabel_"]');
+          const value =
+            spanTexts.length > 1
+              ? spanTexts[spanTexts.length - 1]
+              : (selectText(rowElement, '[class*="_value_"]') ?? null);
 
-            return summary;
-          }, {})
-        : {};
+          if (label && value && label !== value) {
+            summary[label] = value;
+          }
+        }
+
+        const inner = cleanText((container as HTMLElement).innerText ?? '');
+        for (const line of inner.split(/\r?\n/)) {
+          const trimmed = line.trim();
+          const matched = trimmed.match(/^(.+?)\s+(\$[\d,.]+)$/u);
+          if (!matched) {
+            continue;
+          }
+          const labelKey = matched[1].replace(/:\s*$/, '').trim();
+          if (!labelKey || labelKey.startsWith('#') || labelKey.length > 64) {
+            continue;
+          }
+          if (!summary[labelKey] && labelKey !== matched[2]) {
+            summary[labelKey] = matched[2];
+          }
+        }
+
+        const totalStrict =
+          /(?:^|[\n\r])\s*(?:Total|总计|合计)\s*(\$[\d,.]+)/im.exec(inner) ??
+          /\b(?:Total|总计|合计)\s*(\$[\d,.]+)/im.exec(inner);
+        const totalBeforeTips =
+          /(?:^|[\n\r])\s*(?:Total Before Tips|合计（税前）|税前合计)\s*(\$[\d,.]+)/im.exec(inner) ??
+          /\b(?:Total Before Tips|合计（税前）|税前合计)\s*(\$[\d,.]+)/im.exec(inner);
+        if (totalStrict?.[1] && !summary.Total && !summary['total']) {
+          summary.Total = totalStrict[1];
+        }
+        if (totalBeforeTips?.[1] && !summary['Total Before Tips']) {
+          summary['Total Before Tips'] = totalBeforeTips[1];
+        }
+      };
+
+      const priceSummary: Record<string, string> =
+        priceSummaryContainer === null
+          ? {}
+          : Array.from(priceSummaryContainer.children).reduce<Record<string, string>>((summary, rowElement) => {
+              const spanTexts = Array.from(rowElement.querySelectorAll('span'))
+                .map((node) => cleanText(node.textContent))
+                .filter(Boolean);
+              const label =
+                spanTexts[0] ??
+                selectText(rowElement, '[class*="_label_1jzox_"]') ??
+                selectText(rowElement, '[class*="_totalLabel_1jzox_"]');
+              const value =
+                spanTexts.length > 1
+                  ? spanTexts[spanTexts.length - 1]
+                  : (selectText(rowElement, '[class*="_value_1jzox_"]') ?? null);
+
+              if (label && value && label !== value) {
+                summary[label] = value;
+              }
+
+              return summary;
+            }, {});
+
+      if (priceSummaryContainer) {
+        mergePriceSummaryFallback(priceSummaryContainer, priceSummary);
+      }
 
       return {
         orderNumber,
@@ -646,7 +759,11 @@ export class RecallPage {
 
   @step('页面操作：如有手动搜索关键字则重置 Recall 页面状态')
   private async clearManualSearchConditionIfNeeded(): Promise<void> {
-    const currentKeyword = await this.topSearchInput.inputValue().catch(() => '');
+    const inline = this.page.getByTestId('recall2-search-input').first();
+    const currentKeyword =
+      (await inline.count()) > 0 && (await inline.isVisible().catch(() => false))
+        ? await inline.inputValue().catch(() => '')
+        : '';
 
     if (!currentKeyword) {
       return;
@@ -666,13 +783,15 @@ export class RecallPage {
 
     await expect(await this.resolveVisibleSearchDialogInput()).toHaveValue('');
     await this.closeManualSearchDialog();
-    await this.topSearchInput.evaluate((inputElement) => {
-      const input = inputElement as HTMLInputElement;
-      input.value = '';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    await expect(this.topSearchInput).toHaveValue('');
+    if ((await inline.count()) > 0) {
+      await inline.evaluate((inputElement) => {
+        const input = inputElement as HTMLInputElement;
+        input.value = '';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      await expect(inline).toHaveValue('');
+    }
   }
 
   private async waitForOrderDetailsDialogReady(): Promise<void> {
@@ -683,6 +802,20 @@ export class RecallPage {
       {
         timeout: 10_000,
         message: 'Order details dialog did not finish loading in time.',
+      },
+    );
+    /** 详情区常为异步渲染；在读到快照前等待出现订单号与金额，避免 evaluate 落在空壳 DOM 上 */
+    await waitUntil(
+      async () =>
+        this.orderDetailsDialog.evaluate((root) => {
+          const text = (root as HTMLElement).innerText ?? '';
+          return /#\d+/.test(text) && /\$[\d,.]+/.test(text);
+        }),
+      (ready) => ready === true,
+      {
+        timeout: 20_000,
+        interval: 350,
+        message: '订单详情弹窗未在预期时间内渲染出订单号与金额信息',
       },
     );
   }

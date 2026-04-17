@@ -107,35 +107,30 @@ test.describe('堂食点餐后在 Recall 按桌号检索', () => {
         },
       );
 
-      const orderNumbers = await waitUntil(
-        async () => await recallPage.readVisibleOrderNumbers(),
-        (numbers) => numbers.length > 0,
+      const matchedDetails = await waitUntil(
+        async () => {
+          const numbers = await recallPage.readVisibleOrderNumbers();
+          if (numbers.length === 0) {
+            return null;
+          }
+          for (const rawOrderNumber of numbers) {
+            const details = await viewRecallOrderDetails(
+              recallPage,
+              rawOrderNumber.replace(/^#/, ''),
+            );
+            if (orderDetailTotalMatchesOrderPage(details, orderTotalText)) {
+              return details;
+            }
+          }
+          return null;
+        },
+        (details): details is RecallOrderDetails => Boolean(details),
         {
-          timeout: 25_000,
-          message: 'Recall 按桌号搜索后未在列表中出现订单号',
+          timeout: 45_000,
+          interval: 2_000,
+          message: 'Recall 列表中未找到与点餐页合计金额一致的订单（已按当前桌号过滤，含重试）',
         },
       );
-
-      expect(orderNumbers.length).toBeGreaterThan(0);
-
-      let matchedDetails: RecallOrderDetails | null = null;
-
-      for (const rawOrderNumber of orderNumbers) {
-        const details = await viewRecallOrderDetails(
-          recallPage,
-          rawOrderNumber.replace(/^#/, ''),
-        );
-
-        if (orderDetailTotalMatchesOrderPage(details, orderTotalText)) {
-          matchedDetails = details;
-          break;
-        }
-      }
-
-      expect(
-        matchedDetails,
-        'Recall 列表中未找到与点餐页合计金额一致的订单（已按当前桌号过滤）',
-      ).toBeTruthy();
     },
   );
 });

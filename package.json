@@ -9,6 +9,7 @@
     "test:e2e": "playwright test tests/e2e",
     "test:headed": "playwright test --headed",
     "codegen": "playwright codegen http://192.168.0.89:22080/kpos/front2/myhome.html",
+    "allure:clean-results": "node -e \"const fs=require('fs'),p=require('path');const d=p.join(process.cwd(),'allure-results');try{fs.rmSync(d,{recursive:true,force:true})}catch(e){}fs.mkdirSync(d,{recursive:true});\"",
     "allure:generate": "allure generate allure-results --clean -o allure-report",
     "allure:open": "allure open allure-report"
   },

@@ -14,7 +14,8 @@ export class GuestCountDialogPage {
   @step((guestCount: number) => `页面操作：在人数弹窗中选择 ${guestCount} 位客人并进入点餐页`)
   async selectGuestCount(guestCount: number): Promise<OrderDishesPage> {
     await this.expectVisible();
-    await this.page.getByRole('button', { name: String(guestCount), exact: true }).click();
+    const dialog = this.page.getByRole('dialog', { name: 'Guest Count' });
+    await dialog.getByRole('button', { name: String(guestCount), exact: true }).click();
     return new OrderDishesPage(this.page);
   }
 }
