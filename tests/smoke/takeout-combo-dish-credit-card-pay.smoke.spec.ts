@@ -3,14 +3,11 @@ import { CreditCardPayThroughReaderFlow } from '../../flows/credit-card-pay-thro
 import { enterWithEmployeePassword } from '../../flows/employee-login.flow';
 import { openHome } from '../../flows/home.flow';
 import { enterWithAvailableLicense } from '../../flows/license-selection.flow';
-import { addSpecDish } from '../../flows/order-dishes.flow';
-import {
-  selectAnyAvailableTable,
-  selectRandomGuestCountAndEnterOrderDishes,
-} from '../../flows/select-table.flow';
+import { addComboDish } from '../../flows/order-dishes.flow';
+import { startToGoOrder } from '../../flows/takeout.flow';
 import { test } from '../../fixtures/test.fixture';
 import { creditCardSurchargeRateDecimal, salesTaxRateDecimal } from '../../test-data/pricing';
-import { dineInSpecDishCashSmokeTestData } from '../../test-data/dine-in-spec-dish-smoke';
+import { takeOutComboDishCashSmokeTestData } from '../../test-data/takeout-combo-dish-smoke';
 import { isMoneyCloseWithinCents, parseUsdStringToNumber, roundMoneyToCents } from '../../utils/money';
 
 function firstSummaryEntry(
@@ -21,9 +18,9 @@ function firstSummaryEntry(
   return hit?.[1];
 }
 
-test.describe('【Dine In-购买规格菜-点单页Credit Card付款】', () => {
+test.describe('【To Go-购买套餐菜-点单页Credit Card付款】', () => {
   test(
-    '堂食随机人数后搜索规格菜、随机规格并以信用卡读卡支付，点单页汇总与支付成功页 Balance due 一致',
+    '应能完成 To Go 套餐菜点单与点单页信用卡读卡支付，点单页汇总与支付成功页 Balance due 一致',
     {
       tag: ['@smoke'],
       annotation: [
@@ -34,56 +31,42 @@ test.describe('【Dine In-购买规格菜-点单页Credit Card付款】', () => 
       ],
     },
     async ({ homePage, licenseSelectionPage, employeeLoginPage }) => {
-      // 断言9/10（读卡等待、支付成功）在 `OrderDishesPage` 内各 30s 轮询上限；此处为整例总超时（含登录选桌）。
       test.setTimeout(240_000);
-
       const creditPayFlow = new CreditCardPayThroughReaderFlow();
 
-      const specLabels = [...dineInSpecDishCashSmokeTestData.specSizeLabels];
-      const chosenSpec = specLabels[Math.floor(Math.random() * specLabels.length)];
+      await test.step('前置：从首页进入；若有 License 选择页则选用可用 License', async () => {
+        await openHome(homePage);
+        if (await licenseSelectionPage.isVisible(10_000)) {
+          await enterWithAvailableLicense(licenseSelectionPage, homePage);
+        }
+      });
 
-      await openHome(homePage);
-
-      if (await licenseSelectionPage.isVisible(10_000)) {
-        await enterWithAvailableLicense(licenseSelectionPage, homePage);
-      }
-
-      const loggedInHomePage = await enterWithEmployeePassword(
-        employeeLoginPage,
-        homePage,
-        dineInSpecDishCashSmokeTestData.employeePassword,
-      );
-
-      await loggedInHomePage.expectPrimaryFunctionCardsVisible();
-      const selectTablePage = await loggedInHomePage.clickDineIn();
-      await selectTablePage.expectLoaded();
-
-      const { guestCountDialogPage, selectedTable } = await selectAnyAvailableTable(selectTablePage);
-
-      const { orderDishesPage, guestCount } = await selectRandomGuestCountAndEnterOrderDishes(
-        guestCountDialogPage,
-        1,
-        14,
-      );
-
-      await orderDishesPage.expectTableNumber(selectedTable.tableNumber);
-      await orderDishesPage.expectGuestCount(guestCount);
-
-      await orderDishesPage.openDishSearchPanel();
-      await orderDishesPage.applyDishSearchKeyword(dineInSpecDishCashSmokeTestData.specDishSearchKeyword);
-
-      await test.step('断言1：搜索结果中可见规格菜', async () => {
-        await orderDishesPage.expectDishSearchResultVisible(
-          dineInSpecDishCashSmokeTestData.specDishSearchKeyword,
+      const loggedInHomePage = await test.step('前置：员工口令登录进入 POS 主页', async () => {
+        return await enterWithEmployeePassword(
+          employeeLoginPage,
+          homePage,
+          takeOutComboDishCashSmokeTestData.employeePassword,
         );
       });
 
-      await addSpecDish(
-        orderDishesPage,
-        dineInSpecDishCashSmokeTestData.specDishSearchKeyword,
-        [chosenSpec],
-        1,
-      );
+      await loggedInHomePage.expectPrimaryFunctionCardsVisible();
+
+      const orderDishesPage = await test.step('步骤1：首页进入 To Go 点单页并搜索套餐菜', async () => {
+        const odp = await startToGoOrder(loggedInHomePage);
+        await odp.openDishSearchPanel();
+        await odp.applyDishSearchKeyword(takeOutComboDishCashSmokeTestData.comboDishSearchKeyword);
+        await odp.expectDishSearchResultVisible(takeOutComboDishCashSmokeTestData.comboDishSearchKeyword);
+        return odp;
+      });
+
+      await test.step('步骤2：点选套餐菜并完成分组子项选择', async () => {
+        await addComboDish(
+          orderDishesPage,
+          takeOutComboDishCashSmokeTestData.comboDishSearchKeyword,
+          takeOutComboDishCashSmokeTestData.comboSelections,
+          1,
+        );
+      });
 
       const summary = await orderDishesPage.readPriceSummaryLabelAmountMap();
       const cartQtySum = await orderDishesPage.readCartDishQuantitySumFromLines();
@@ -127,26 +110,26 @@ test.describe('【Dine In-购买规格菜-点单页Credit Card付款】', () => 
       expect(totalCashText, '价格汇总中应有 Total(Cash)').toBeTruthy();
       expect(totalCardText, '价格汇总中应有 Total(Card)').toBeTruthy();
 
-      await test.step('步骤3 后断言：Count / Subtotal / Tax / Total(Cash) / Total(Card)', async () => {
-        await test.step('断言2：Count 与已选菜品份数一致', async () => {
+      await test.step('步骤3：校验左侧 Count / Subtotal / Tax / Total(Cash) / Total(Card)', async () => {
+        await test.step('断言：Count 与已选菜品份数一致', async () => {
           const countNum = Number(String(countText).replace(/[^\d]/g, ''));
           expect(Number.isFinite(countNum)).toBe(true);
           expect(countNum).toBe(cartQtySum);
         });
 
-        await test.step('断言3：Subtotal 与购物车行主价格之和一致', async () => {
+        await test.step('断言：Subtotal 与购物车行主价格之和一致', async () => {
           const subtotalNum = parseUsdStringToNumber(subtotalText!);
           expect(isMoneyCloseWithinCents(subtotalNum, cartPriceSum)).toBe(true);
         });
 
-        await test.step('断言4：Tax 等于 Subtotal 按配置税率计算', async () => {
+        await test.step('断言：Tax 等于 Subtotal 按配置税率计算', async () => {
           const subtotalNum = parseUsdStringToNumber(subtotalText!);
           const taxNum = parseUsdStringToNumber(taxText!);
           const expectedTax = roundMoneyToCents(subtotalNum * salesTaxRateDecimal);
           expect(isMoneyCloseWithinCents(taxNum, expectedTax)).toBe(true);
         });
 
-        await test.step('断言5：Total(Cash) 等于 Subtotal + Tax', async () => {
+        await test.step('断言：Total(Cash) 等于 Subtotal + Tax', async () => {
           const subtotalNum = parseUsdStringToNumber(subtotalText!);
           const taxNum = parseUsdStringToNumber(taxText!);
           const totalCashNum = parseUsdStringToNumber(totalCashText!);
@@ -155,12 +138,15 @@ test.describe('【Dine In-购买规格菜-点单页Credit Card付款】', () => 
         });
 
         await test.step(
-          '断言6：Total(Card) 等于 Subtotal + Tax + 信用卡加收率 × Subtotal（加收基数为小计）',
+          '断言：Total(Card) 等于 Subtotal + Tax + 信用卡加收率 ×（Subtotal + Tax）（当前 POS 在含税合计上加收；与纯 Subtotal 基数不同）',
           async () => {
             const subtotalNum = parseUsdStringToNumber(subtotalText!);
             const taxNum = parseUsdStringToNumber(taxText!);
             const totalCardNum = parseUsdStringToNumber(totalCardText!);
-            const cardSurcharge = roundMoneyToCents(subtotalNum * creditCardSurchargeRateDecimal);
+            const taxableBaseForCard = roundMoneyToCents(subtotalNum + taxNum);
+            const cardSurcharge = roundMoneyToCents(
+              taxableBaseForCard * creditCardSurchargeRateDecimal,
+            );
             const expected = roundMoneyToCents(subtotalNum + taxNum + cardSurcharge);
             expect(isMoneyCloseWithinCents(totalCardNum, expected)).toBe(true);
           },
@@ -169,10 +155,12 @@ test.describe('【Dine In-购买规格菜-点单页Credit Card付款】', () => 
 
       const totalCardForPayment = totalCardText!;
 
-      await creditPayFlow.stepClickPay(orderDishesPage);
-      await creditPayFlow.stepSkipMembershipIfPresentThenCreditCard(orderDishesPage);
-      await creditPayFlow.stepExpectCardReaderWaiting(orderDishesPage);
-      await creditPayFlow.stepExpectCreditPaidSuccess(orderDishesPage, totalCardForPayment);
+      await test.step('步骤4～8：Pay → Credit Card → 读卡等待 → 小费/签名若需 → 支付成功页 Balance due', async () => {
+        await creditPayFlow.stepClickPay(orderDishesPage);
+        await creditPayFlow.stepSkipMembershipIfPresentThenCreditCard(orderDishesPage);
+        await creditPayFlow.stepExpectCardReaderWaiting(orderDishesPage);
+        await creditPayFlow.stepExpectCreditPaidSuccess(orderDishesPage, totalCardForPayment);
+      });
     },
   );
 });
