@@ -56,6 +56,12 @@ export class OrderDishesFlow {
     await orderDishesPage.expectLoaded();
     await orderDishesPage.clickDish(dishName);
 
+    // 固定套餐等场景可能点击后直接入购物车，不会弹出套餐选择层。
+    if (!(await orderDishesPage.isComboDialogVisible())) {
+      await this.adjustQuantityIfNeeded(orderDishesPage, quantity);
+      return;
+    }
+
     for (const [sectionName, sectionSelection] of Object.entries(selections)) {
       if (typeof sectionSelection === 'string') {
         await orderDishesPage.selectComboSectionItem(sectionName, sectionSelection);
