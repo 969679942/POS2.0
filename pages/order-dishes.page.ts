@@ -374,6 +374,11 @@ export class OrderDishesPage {
     await expect(this.resolveDishButton(dishName)).toBeVisible({ timeout: 20_000 });
   }
 
+  @step((dishName: string) => `页面读取：确认搜索结果中不应出现菜品 ${dishName}`)
+  async expectDishSearchResultHidden(dishName: string): Promise<void> {
+    await expect(this.resolveDishButton(dishName)).toBeHidden({ timeout: 5_000 });
+  }
+
   @step('页面读取：展开价格汇总并读取左侧标签到金额或数量的映射')
   async readPriceSummaryLabelAmountMap(): Promise<Record<string, string>> {
     await this.expectLoaded();

@@ -1,5 +1,6 @@
 import { AdminPage } from '../pages/admin.page';
 import { step } from '../utils/step';
+import type { AdminMenuDeleteGroupFlow } from './admin-menu-delete-group.flow';
 
 function randomAlnum10(): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -16,7 +17,7 @@ export class AdminMenuCreateGroupFlow {
     return `${prefix}${randomAlnum10()}`;
   }
 
-  @step('业务步骤：Admin-等待后台壳就绪（侧栏 Restaurant 等）')
+  @step('业务步骤：Admin-等待侧栏 Menu 入口可见（出现即可继续点 Menu）')
   async stepWaitAdminShellReady(adminPage: AdminPage): Promise<void> {
     await adminPage.expectAdminMenuShellReady();
   }
@@ -48,7 +49,7 @@ export class AdminMenuCreateGroupFlow {
     await adminPage.choosePosMenuOptionAndConfirmOk();
   }
 
-  @step((name: string) => `业务步骤：步骤5-填写 Group name：${name}`)
+  @step((_adminPage: AdminPage, name: string) => `业务步骤：步骤5-填写 Group name：${name}`)
   async stepFillGroupName(adminPage: AdminPage, name: string): Promise<void> {
     await adminPage.fillNewGroupName(name);
   }
@@ -61,5 +62,17 @@ export class AdminMenuCreateGroupFlow {
   @step('断言4：步骤8-POS Menu 下可见新建菜单组')
   async stepAssertNewGroupUnderPosMenu(adminPage: AdminPage, groupName: string): Promise<void> {
     await adminPage.expectGroupNameVisibleUnderPosMenu(groupName);
+  }
+
+  @step((_adminPage: AdminPage, groupName: string) => `后置：调用删除菜单组流程清理「${groupName}」`)
+  async stepCleanupCreatedMenuGroupViaDeleteFlow(
+    adminPage: AdminPage,
+    deleteFlow: AdminMenuDeleteGroupFlow,
+    groupName: string,
+  ): Promise<void> {
+    await deleteFlow.stepMenuNavAndExpandPosMenuUntilGroupVisible(adminPage, groupName);
+    await deleteFlow.stepSelectMenuGroupRowCheckbox(adminPage, groupName);
+    await deleteFlow.stepToolbarDeleteAndConfirmDialog(adminPage);
+    await deleteFlow.stepAssertDeleteSuccessMessage(adminPage);
   }
 }

@@ -1,5 +1,6 @@
 import { AdminMenuCreateCategoryFlow } from '../../flows/admin-menu-create-category.flow';
 import { AdminMenuCreateGroupFlow } from '../../flows/admin-menu-create-group.flow';
+import { AdminMenuDeleteGroupFlow } from '../../flows/admin-menu-delete-group.flow';
 import { enterWithEmployeePassword } from '../../flows/employee-login.flow';
 import { openHome } from '../../flows/home.flow';
 import { enterWithAvailableLicense } from '../../flows/license-selection.flow';
@@ -17,6 +18,7 @@ test.describe('【Admin-Menu-Create Menu Category】', () => {
 
       const createFlow = new AdminMenuCreateGroupFlow();
       const categoryFlow = new AdminMenuCreateCategoryFlow();
+      const deleteFlow = new AdminMenuDeleteGroupFlow();
       const groupName = createFlow.buildAutotestGroupName(adminMenuCreateCategorySmokeTestData.groupNamePrefix);
       const categoryDisplayName = categoryFlow.buildCategoryDisplayName();
 
@@ -70,6 +72,10 @@ test.describe('【Admin-Menu-Create Menu Category】', () => {
 
       await test.step(`断言1：组下可见新建 Category「${categoryDisplayName}」`, async () => {
         await categoryFlow.stepAssertCategoryVisibleUnderGroup(adminPage, categoryDisplayName);
+      });
+
+      await test.step('后置：删除本次新建菜单组并清理数据', async () => {
+        await createFlow.stepCleanupCreatedMenuGroupViaDeleteFlow(adminPage, deleteFlow, groupName);
       });
     },
   );

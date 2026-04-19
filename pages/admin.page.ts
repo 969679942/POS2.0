@@ -3,7 +3,7 @@ import { step } from '../utils/step';
 import { waitUntil } from '../utils/wait';
 
 /**
- * Admin 后台：侧栏在顶层 `page`；菜单编辑区可能在 `kpos/menu/...` 子 Frame，或与壳同文档。
+ * Admin 后台：侧栏可能在主文档（Admin 全屏壳常见），也可能与 POS 首页同在 `#newLoginContainer iframe`；菜单编辑区可能在 `kpos/menu/...` 子 Frame，或与壳同文档。
  */
 export class AdminPage {
   private menuDoc: Frame | null = null;
@@ -37,7 +37,7 @@ export class AdminPage {
   }
 
   @step('页面操作：解析菜单内容 Frame（须在目标文档内已见 CREATE NEW 或 Create New Group 再绑定，禁止空 iframe 误判）')
-  private async bindMenuContentFrame(options?: { timeout?: number }): Promise<void> {
+  private async bindMenuContentFrame(options?: { timeout?: number; interval?: number }): Promise<void> {
     const timeout = options?.timeout ?? 60_000;
     await waitUntil(
       async () => {
@@ -78,23 +78,29 @@ export class AdminPage {
       (ok) => ok === true,
       {
         timeout,
-        interval: 400,
+        interval: options?.interval ?? 250,
         message:
           '未解析到菜单内容：在 iframe#innerpage、kpos/menu 子 frame、主文档与其它 iframe 内均未在超时内见到 CREATE NEW 或 Create New Group',
       },
     );
   }
 
-  @step('页面操作：等待 Admin 后台壳出现（侧栏可见 Restaurant）')
+  @step('页面操作：等待 Admin 壳出现可点击的 Menu 入口（主文档优先 #admstMenutxt / menu_book，再查 POS 应用 iframe）')
   async expectAdminMenuShellReady(): Promise<void> {
     await waitUntil(
-      async () =>
-        await this.page.getByText('Restaurant', { exact: true }).first().isVisible().catch(() => false),
+      async () => {
+        for (const loc of this.sidebarMenuEntryProbeLocators()) {
+          if (await loc.isVisible().catch(() => false)) {
+            return true;
+          }
+        }
+        return false;
+      },
       (ok) => ok === true,
       {
-        timeout: 60_000,
-        interval: 400,
-        message: '未在超时内进入 Admin 壳（未见 Restaurant）',
+        timeout: 30_000,
+        interval: 50,
+        message: '未在超时内进入 Admin 壳（未见可点的 Menu 入口）',
       },
     );
   }
@@ -135,18 +141,48 @@ export class AdminPage {
     return this.m().getByRole('button', { name: /^save$/i }).first();
   }
 
-  /** 侧栏「Menu」文案：产品固定 id `admstMenutxt`（不绑死 class，避免样式类变更后点不到） */
-  private sidebarMenuById(): Locator {
-    return this.page.locator('#admstMenutxt');
+  /** 与首页 POS 壳同一层 iframe（侧栏在 Admin 全屏时常在主文档，勿只查此 frame） */
+  private posAppShellFrame(): FrameLocator {
+    return this.page.frameLocator('#newLoginContainer iframe');
+  }
+
+  /** 侧栏 Menu 就绪探测顺序：主文档先于应用 iframe，避免 `.or()` 左侧空转 */
+  private sidebarMenuEntryProbeLocators(): Locator[] {
+    return [
+      this.page.locator('#admstMenutxt').first(),
+      this.posAppShellFrame().locator('#admstMenutxt').first(),
+      this.page.getByText('menu_book', { exact: true }).locator('..').first(),
+      this.posAppShellFrame().getByText('menu_book', { exact: true }).locator('..').first(),
+    ];
+  }
+
+  /** 返回当前可见的侧栏 Menu 点击目标（无则 null） */
+  private async resolveVisibleSidebarMenuClickTarget(): Promise<Locator | null> {
+    for (const loc of this.sidebarMenuEntryProbeLocators()) {
+      if (await loc.isVisible().catch(() => false)) {
+        return loc;
+      }
+    }
+    return null;
   }
 
   @step('断言1：步骤2-侧栏可见 Menu（#admstMenutxt 或 menu_book 行），内容区可见 CREATE NEW 与 Create New Group')
   async expectMenuNavAndCreateNewGroupEntryVisible(): Promise<void> {
-    const byId = this.sidebarMenuById();
-    const byIconRow = this.page.getByText('menu_book', { exact: true }).locator('..');
-    await expect(byId.or(byIconRow).first()).toBeVisible({ timeout: 20_000 });
-    if (await byId.isVisible().catch(() => false)) {
-      await expect(byId).toContainText('Menu', { timeout: 5_000 });
+    await waitUntil(
+      async () => (await this.resolveVisibleSidebarMenuClickTarget()) !== null,
+      (ok) => ok === true,
+      {
+        timeout: 20_000,
+        interval: 50,
+        message: '侧栏未见 Menu 入口（主文档 #admstMenutxt / menu_book 行或应用 iframe 内同定位）',
+      },
+    );
+    const mainId = this.page.locator('#admstMenutxt').first();
+    const appId = this.posAppShellFrame().locator('#admstMenutxt').first();
+    if (await mainId.isVisible().catch(() => false)) {
+      await expect(mainId).toContainText('Menu', { timeout: 5_000 });
+    } else if (await appId.isVisible().catch(() => false)) {
+      await expect(appId).toContainText('Menu', { timeout: 5_000 });
     }
     await expect(this.m().getByText(/CREATE\s*NEW/i).first()).toBeVisible({ timeout: 20_000 });
     await expect(this.m().getByText('Create New Group', { exact: true }).first()).toBeVisible({
@@ -156,9 +192,6 @@ export class AdminPage {
 
   @step('页面操作：步骤2-点击侧栏进入菜单管理（优先 #admstMenutxt；再 menu_book 父级整行；绑定失败会重试一次点击）')
   async clickMenuNav(): Promise<void> {
-    const byId = this.sidebarMenuById().first();
-    const menuRow = this.page.getByText('menu_book', { exact: true }).locator('..');
-
     const tryClick = async (loc: Locator) => {
       await loc.scrollIntoViewIfNeeded().catch(() => {});
       await loc.click({ timeout: 10_000, force: true }).catch(async () => {
@@ -169,28 +202,34 @@ export class AdminPage {
     };
 
     const performMenuEntryClick = async () => {
-      if ((await byId.count()) > 0) {
-        await tryClick(byId);
+      const visible = await this.resolveVisibleSidebarMenuClickTarget();
+      if (visible) {
+        await tryClick(visible);
         return;
       }
-      if (await menuRow.isVisible().catch(() => false)) {
-        await tryClick(menuRow);
-        return;
+      await waitUntil(
+        async () => (await this.resolveVisibleSidebarMenuClickTarget()) !== null,
+        (ok) => ok === true,
+        {
+          timeout: 25_000,
+          interval: 50,
+          message: '侧栏 Menu 入口未在超时内可见',
+        },
+      );
+      const afterWait = await this.resolveVisibleSidebarMenuClickTarget();
+      if (!afterWait) {
+        throw new Error('侧栏 Menu 入口已等待可见，但未解析到可点击定位');
       }
-      await expect(byId.or(menuRow).first()).toBeVisible({ timeout: 25_000 });
-      if ((await byId.count()) > 0) {
-        await tryClick(byId);
-      } else {
-        await tryClick(menuRow);
-      }
+      await tryClick(afterWait);
     };
 
     await performMenuEntryClick();
     try {
-      await this.bindMenuContentFrame({ timeout: 45_000 });
+      // 当前环境下第一次点击常未真正触发菜单切换，先做一次更短探测，再补点，减少空等时间。
+      await this.bindMenuContentFrame({ timeout: 3_000, interval: 120 });
     } catch {
       await performMenuEntryClick();
-      await this.bindMenuContentFrame({ timeout: 75_000 });
+      await this.bindMenuContentFrame({ timeout: 24_000, interval: 200 });
     }
   }
 
@@ -320,7 +359,7 @@ export class AdminPage {
   /** Category 等子页：成功提示可能为英文句、Snackbar 或中文短句；部分环境仅展示无文案 Snackbar */
   @step('断言：界面出现保存成功类提示（Successfully saved / Snackbar / 中文）')
   async expectSaveSuccessMessageVisibleFlexible(options?: { timeout?: number }): Promise<void> {
-    const timeout = options?.timeout ?? 60_000;
+    const timeout = options?.timeout ?? 3_000;
     await waitUntil(
       async () => {
         const checks = [
@@ -472,6 +511,24 @@ export class AdminPage {
     await expect(this.m().getByText(/Group\s*name/i).first()).toBeVisible({ timeout: 30_000 });
   }
 
+  @step((name: string) => `页面操作：在菜单组列表中点击 Category「${name}」进入分类编辑页`)
+  async clickCategoryNameInMenuGroup(name: string): Promise<void> {
+    const link = this.m()
+      .getByRole('link', { name, exact: true })
+      .or(this.m().getByText(name, { exact: true }))
+      .first();
+    await link.scrollIntoViewIfNeeded().catch(() => {});
+    await expect(link).toBeVisible({ timeout: 30_000 });
+    await link.click({ force: true, timeout: 15_000 }).catch(async () => {
+      await link.evaluate((el) => (el as HTMLElement).click());
+    });
+    const createNewButton = this.m()
+      .getByRole('button', { name: /^\+?\s*CREATE NEW$/i })
+      .or(this.m().getByRole('button', { name: /CREATE NEW/i }))
+      .first();
+    await expect(createNewButton).toBeVisible({ timeout: 30_000 });
+  }
+
   @step('页面操作：点击 CREATE NEW 后选择 Create New Category')
   async clickCreateNewCategoryFromToolbar(): Promise<void> {
     await this.clickCreateNewMenu();
@@ -483,6 +540,12 @@ export class AdminPage {
     }
     await expect(byText).toBeVisible({ timeout: 15_000 });
     await byText.click();
+  }
+
+  @step('页面操作：点击 CREATE NEW 后选择 Create New Item')
+  async clickCreateNewItemFromToolbar(): Promise<void> {
+    await this.clickCreateNewMenu();
+    await this.expectItemEditorVisible();
   }
 
   /** 新建 Category 向导：含菜单组 mdc-select 的弹层（避免与其它无下拉弹窗混淆） */
@@ -512,12 +575,360 @@ export class AdminPage {
     await ok.click();
   }
 
+  private itemEditorHeading(): Locator {
+    return this.m().getByRole('heading').filter({ hasText: /Back to Category/i }).first();
+  }
+
+  @step('页面操作：确认普通菜编辑页已显示 Back to Category 与 Item Name')
+  async expectItemEditorVisible(): Promise<void> {
+    await expect(this.itemEditorHeading()).toBeVisible({ timeout: 30_000 });
+    await expect(this.itemNameInput()).toBeVisible({ timeout: 15_000 });
+  }
+
+  private itemSectionTitle(title: RegExp): Locator {
+    return this.m().getByText(title, { exact: true }).first();
+  }
+
+  private itemSectionInput(title: RegExp, index = 1): Locator {
+    return this.itemSectionTitle(title).locator(`xpath=following::input[${index}] | following::textarea[${index}]`).first();
+  }
+
+  private itemNameInput(): Locator {
+    return this.itemSectionInput(/^Name$/i, 1);
+  }
+
+  private itemPriceInput(): Locator {
+    return this.m().getByRole('textbox', { name: /^Please Input Price$/i }).first();
+  }
+
+  private memberPriceInput(): Locator {
+    return this.m().getByRole('textbox', { name: /^Please Input Benefit Price$/i }).first();
+  }
+
+  private unitPriceItemCheckbox(): Locator {
+    const byRole = this.m().getByRole('checkbox', { name: /^Unit Price Item\??$/i }).first();
+    const byLabel = this.m()
+      .locator('label')
+      .filter({ hasText: /^Unit Price Item\??$/i })
+      .locator('input[type="checkbox"]')
+      .first();
+    return byRole.or(byLabel).first();
+  }
+
+  private openPriceItemCheckbox(): Locator {
+    const byRole = this.m().getByRole('checkbox', { name: /^Open Price Item$/i }).first();
+    const byLabel = this.m()
+      .locator('label')
+      .filter({ hasText: /^Open Price Item$/i })
+      .locator('input[type="checkbox"]')
+      .first();
+    return byRole.or(byLabel).first();
+  }
+
+  private detailPriceItemCheckbox(): Locator {
+    const byRole = this.m().getByRole('checkbox', { name: /^It has detail price\(s\)\??$/i }).first();
+    const byLabel = this.m()
+      .locator('label')
+      .filter({ hasText: /^It has detail price\(s\)\??$/i })
+      .locator('input[type="checkbox"]')
+      .first();
+    return byRole.or(byLabel).first();
+  }
+
+  private sendToKitchenRequiredCheckbox(): Locator {
+    const byRole = this.m().getByRole('checkbox', { name: /^Send to Kitchen required\??$/i }).first();
+    const byLabel = this.m()
+      .locator('label')
+      .filter({ hasText: /^Send to Kitchen required\??$/i })
+      .locator('input[type="checkbox"]')
+      .first();
+    return byRole.or(byLabel).first();
+  }
+
+  private kitchenPrinterLabel(printerNames: string[]): Locator {
+    const escapedNames = printerNames.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const namePattern = new RegExp(`^(${escapedNames.join('|')})$`, 'i');
+    return this.m().getByText(namePattern).first();
+  }
+
+  private tareInput(): Locator {
+    const byRole = this.m().getByRole('textbox', { name: /^(Tare|Trae)$/i }).first();
+    const byPlaceholder = this.m().getByPlaceholder(/^(Tare|Trae)$/i).first();
+    const byText = this.m()
+      .locator('text=Tare')
+      .or(this.m().locator('text=Trae'))
+      .first()
+      .locator('xpath=preceding-sibling::input[1] | preceding-sibling::textarea[1]')
+      .first();
+    return byRole.or(byPlaceholder).or(byText).first();
+  }
+
+  private detailPriceValueInputs(): Locator {
+    return this.m().getByRole('textbox', { name: /^Please Input Price$/i });
+  }
+
+  private detailPriceBenefitValueInputs(): Locator {
+    return this.m().getByRole('textbox', { name: /^Please Input Benefit Price$/i });
+  }
+
+  private detailPriceItemPriceInput(rowIndex = 0): Locator {
+    return this.detailPriceValueInputs().nth(rowIndex + 1);
+  }
+
+  private detailPriceMemberPriceInput(rowIndex = 0): Locator {
+    return this.detailPriceBenefitValueInputs().nth(rowIndex + 1);
+  }
+
+  private detailPriceRow(rowIndex: number): Locator {
+    return this.detailPriceItemPriceInput(rowIndex).locator('xpath=ancestor::*[count(.//*[@role="listbox"]) = 2][1]');
+  }
+
+  private detailPriceTypeListboxes(rowIndex: number): Locator {
+    return this.detailPriceRow(rowIndex).getByRole('listbox');
+  }
+
+  private detailPriceSizeListboxes(rowIndex: number): Locator {
+    return this.detailPriceRow(rowIndex).getByRole('listbox');
+  }
+
+  private addDetailPriceButton(): Locator {
+    return this.m().getByRole('button', { name: /^\+\s*ADD DETAIL PRICE$/i }).first();
+  }
+
+  private async resolveListboxPopup(trigger: Locator): Promise<Locator | null> {
+    const ariaControls = (await trigger.getAttribute('aria-controls').catch(() => null)) ?? null;
+    const ariaOwns = (await trigger.getAttribute('aria-owns').catch(() => null)) ?? null;
+    const popupId = ariaControls ?? ariaOwns;
+    if (!popupId) {
+      return null;
+    }
+    return this.m().locator(`[id="${popupId}"]`).first();
+  }
+
+  private async clickVisibleOptionByText(optionText: string, scope: Locator = this.m().locator('body')): Promise<void> {
+    const roleMatches = scope.getByRole('option', { name: optionText, exact: true });
+    const textMatches = scope.getByText(optionText, { exact: true });
+    await waitUntil(
+      async () => {
+        for (const candidates of [roleMatches, textMatches]) {
+          const count = await candidates.count().catch(() => 0);
+          for (let index = 0; index < count; index += 1) {
+            if (await candidates.nth(index).isVisible().catch(() => false)) {
+              return true;
+            }
+          }
+        }
+        return false;
+      },
+      (visible) => visible === true,
+      {
+        timeout: 10_000,
+        interval: 200,
+        message: `未在超时内见到可见的下拉选项：${optionText}`,
+      },
+    );
+
+    for (const candidates of [roleMatches, textMatches]) {
+      const count = await candidates.count().catch(() => 0);
+      let visibleIndex = -1;
+      for (let index = 0; index < count; index += 1) {
+        if (await candidates.nth(index).isVisible().catch(() => false)) {
+          visibleIndex = index;
+        }
+      }
+      if (visibleIndex >= 0) {
+        await candidates.nth(visibleIndex).click({ force: true });
+        return;
+      }
+    }
+
+    throw new Error(`未找到可见的下拉选项：${optionText}`);
+  }
+
+  private applyCategoryTaxRadio(): Locator {
+    const byRole = this.m().getByRole('radio', { name: /^Apply category tax$/i }).first();
+    const byLabel = this.m()
+      .locator('label')
+      .filter({ hasText: /^Apply category tax$/i })
+      .locator('input[type="radio"]')
+      .first();
+    return byRole.or(byLabel).first();
+  }
+
+  @step((itemName: string) => `页面操作：在普通菜表单中填写 Item Name 为 ${itemName}`)
+  async fillItemName(itemName: string): Promise<void> {
+    const input = this.itemNameInput();
+    await expect(input).toBeVisible({ timeout: 15_000 });
+    await input.fill(itemName);
+  }
+
+  @step((itemPrice: string) => `页面操作：在普通菜表单中填写 Item Price 为 ${itemPrice}`)
+  async fillItemPrice(itemPrice: string): Promise<void> {
+    const input = this.itemPriceInput();
+    await expect(input).toBeVisible({ timeout: 15_000 });
+    await input.fill(itemPrice);
+  }
+
+  @step((memberPrice: string) => `页面操作：在普通菜表单中填写 Member Price 为 ${memberPrice}`)
+  async fillMemberPrice(memberPrice: string): Promise<void> {
+    const input = this.memberPriceInput();
+    await expect(input).toBeVisible({ timeout: 15_000 });
+    await input.fill(memberPrice);
+  }
+
+  @step('页面操作：在称重菜表单中勾选 Unit Price Item')
+  async checkUnitPriceItem(): Promise<void> {
+    const checkbox = this.unitPriceItemCheckbox();
+    await expect(checkbox).toBeVisible({ timeout: 15_000 });
+    if (!(await checkbox.isChecked().catch(() => false))) {
+      await checkbox.click({ force: true });
+    }
+    await expect(checkbox).toBeChecked({ timeout: 5_000 });
+  }
+
+  @step('页面操作：在普通菜表单中勾选 Open Price Item')
+  async checkOpenPriceItem(): Promise<void> {
+    const checkbox = this.openPriceItemCheckbox();
+    await expect(checkbox).toBeVisible({ timeout: 15_000 });
+    if (!(await checkbox.isChecked().catch(() => false))) {
+      await checkbox.click({ force: true });
+    }
+    await expect(checkbox).toBeChecked({ timeout: 5_000 });
+  }
+
+  @step('页面操作：在普通菜表单中勾选 Send to Kitchen required 并默认选择打印机')
+  async enableDefaultKitchenPrinters(): Promise<void> {
+    const sendToKitchenRequired = this.sendToKitchenRequiredCheckbox();
+    await expect(sendToKitchenRequired).toBeVisible({ timeout: 15_000 });
+    if (!(await sendToKitchenRequired.isChecked().catch(() => false))) {
+      await sendToKitchenRequired.click({ force: true });
+    }
+    await expect(sendToKitchenRequired).toBeChecked({ timeout: 5_000 });
+
+    for (const printerNames of [
+      ['Kds'],
+      ['kitchen'],
+      ['label'],
+      ['packer', 'paker'],
+      ['receipt'],
+      ['runner'],
+    ]) {
+      const printerLabel = this.kitchenPrinterLabel(printerNames);
+      await printerLabel.evaluate((el) => {
+        (el as HTMLElement).click();
+      });
+    }
+  }
+
+  @step('页面操作：确认称重菜表单中的 Tare 输入框可见')
+  async expectTareInputVisible(): Promise<void> {
+    await expect(this.tareInput()).toBeVisible({ timeout: 15_000 });
+  }
+
+  @step((tare: string) => `页面操作：在称重菜表单中填写 Tare 为 ${tare}`)
+  async fillTare(tare: string): Promise<void> {
+    const input = this.tareInput();
+    await expect(input).toBeVisible({ timeout: 15_000 });
+    await input.fill(tare);
+  }
+
+  @step('页面操作：在称重菜/详情菜表单中勾选 It has detail price(s)')
+  async checkDetailPriceItem(): Promise<void> {
+    const checkbox = this.detailPriceItemCheckbox();
+    await expect(checkbox).toBeVisible({ timeout: 15_000 });
+    if (!(await checkbox.isChecked().catch(() => false))) {
+      await checkbox.click({ force: true });
+    }
+    await expect(checkbox).toBeChecked({ timeout: 5_000 });
+  }
+
+  @step('页面操作：确认 detail price 区域可见')
+  async expectDetailPriceAreaVisible(): Promise<void> {
+    await expect(this.addDetailPriceButton()).toBeVisible({ timeout: 15_000 });
+    const firstRow = this.detailPriceRow(0);
+    await expect(firstRow).toBeVisible({ timeout: 15_000 });
+    await expect(firstRow.getByRole('listbox').first()).toBeVisible({ timeout: 15_000 });
+    await expect(firstRow.getByRole('listbox').nth(1)).toBeVisible({ timeout: 15_000 });
+  }
+
+  @step((rowIndex: number, itemPrice: string) => `页面操作：在 detail price 表单中填写第 ${rowIndex + 1} 行 Item Price 为 ${itemPrice}`)
+  async fillDetailPriceItemPrice(rowIndex: number, itemPrice: string): Promise<void> {
+    const input = this.detailPriceItemPriceInput(rowIndex);
+    await expect(input).toBeVisible({ timeout: 15_000 });
+    await input.fill(itemPrice);
+  }
+
+  @step((rowIndex: number, memberPrice: string) => `页面操作：在 detail price 表单中填写第 ${rowIndex + 1} 行 Member Price 为 ${memberPrice}`)
+  async fillDetailPriceMemberPrice(rowIndex: number, memberPrice: string): Promise<void> {
+    const input = this.detailPriceMemberPriceInput(rowIndex);
+    await expect(input).toBeVisible({ timeout: 15_000 });
+    await input.fill(memberPrice);
+  }
+
+  @step((rowIndex: number, typeName: string) => `页面操作：在 detail price 表单中选择第 ${rowIndex + 1} 行 Type 为 ${typeName}`)
+  async selectDetailPriceType(rowIndex: number, typeName: string): Promise<void> {
+    const trigger = this.detailPriceTypeListboxes(rowIndex).first();
+    await expect(trigger).toBeVisible({ timeout: 15_000 });
+    await trigger.click({ force: true });
+    const popup = await this.resolveListboxPopup(trigger);
+    await this.clickVisibleOptionByText(typeName, popup ?? this.detailPriceRow(rowIndex));
+  }
+
+  @step((rowIndex: number) => `页面操作：在 detail price 表单中按顺序选择第 ${rowIndex + 1} 个 Size`)
+  async selectDetailPriceSize(rowIndex: number): Promise<void> {
+    const trigger = this.detailPriceSizeListboxes(rowIndex).nth(1);
+    await expect(trigger).toBeVisible({ timeout: 15_000 });
+    await trigger.click({ force: true });
+    const targetValue = String(61 + rowIndex);
+    const option = trigger.locator(`li[role="option"][data-value="${targetValue}"]`).first();
+    await waitUntil(
+      async () => await option.count().catch(() => 0) > 0,
+      (ready) => ready === true,
+      {
+        timeout: 10_000,
+        interval: 200,
+        message: `未在超时内见到 data-value=${targetValue} 的 Size 选项`,
+      },
+    );
+    await option.evaluate((el) => (el as HTMLElement).click());
+  }
+
+  @step('页面操作：在 detail price 表单中点击 ADD DETAIL PRICE')
+  async clickAddDetailPrice(): Promise<void> {
+    const button = this.addDetailPriceButton();
+    await expect(button).toBeVisible({ timeout: 15_000 });
+    await button.click({ force: true });
+  }
+
+  @step('页面操作：确认普通菜表单中的 Apply category tax 默认选中')
+  async expectApplyCategoryTaxSelected(): Promise<void> {
+    const radio = this.applyCategoryTaxRadio();
+    await expect(radio).toBeVisible({ timeout: 15_000 });
+    await expect(radio).toBeChecked({ timeout: 5_000 });
+  }
+
+  @step('页面操作：点击普通菜表单右下角 SAVE')
+  async clickSaveItemForm(): Promise<void> {
+    const save = this.m().locator('contentinfo, footer').getByRole('button', { name: /^save$/i }).first();
+    await expect(save).toBeVisible({ timeout: 15_000 });
+    await save.scrollIntoViewIfNeeded().catch(() => {});
+    await expect(save).toBeEnabled({ timeout: 10_000 });
+    await save.click({ force: true });
+  }
+
   /** Category Name 行：首个 `main` 内 textbox 序号常不是本字段，需用「Category Name」标签前一同级 input。 */
   private categoryNameRequiredInput(): Locator {
     return this.m()
       .getByText(/Category Name/i)
       .first()
       .locator('xpath=preceding-sibling::input[1] | preceding-sibling::textarea[1]');
+  }
+
+  /**
+   * Category 编辑顶栏返回：与页面内 `document.evaluate("//span[contains(text(), 'keyboard_arrow_left')]", document, …)` 一致，在已绑定的菜单内容 Frame 内查找。
+   */
+  private categoryEditorBackArrowMaterialSpan(): Locator {
+    return this.m().locator('xpath=//span[contains(text(), "keyboard_arrow_left")]');
   }
 
   @step((value: string) => `页面操作：填写 Category 四类名称均为「${value}」`)
@@ -574,8 +985,8 @@ export class AdminPage {
       .filter({ hasText: /Multiple taxes/i })
       .first();
     await waitUntil(async () => await dlg.isVisible().catch(() => false), (v) => v === true, {
-      timeout: 12_000,
-      interval: 250,
+      timeout: 1_200,
+      interval: 150,
       message: '（占位，无多税弹窗时由后续断言处理保存结果）',
     }).catch(() => {});
     if (await dlg.isVisible().catch(() => false)) {
@@ -583,7 +994,7 @@ export class AdminPage {
     }
   }
 
-  @step('页面操作：点击顶部 Back to Menu Group 左侧返回箭头（keyboard_arrow_left）回到组内列表')
+  @step('页面操作：SAVE 后在菜单内容区内用 XPath 定位含 keyboard_arrow_left 的 span 并点击返回组列表')
   async clickBackToMenuGroupChevron(): Promise<void> {
     const snack = this.m().locator('.mdc-snackbar');
     if (await snack.isVisible().catch(() => false)) {
@@ -594,13 +1005,8 @@ export class AdminPage {
       );
     }
 
-    const heading = this.m().getByRole('heading').filter({ hasText: /Back to Menu Group/i }).first();
-    await expect(heading).toBeVisible({ timeout: 20_000 });
-    const icon = heading
-      .locator('span.material-icons, span.mdc-icon--material, .mdc-icon--material')
-      .filter({ hasText: 'keyboard_arrow_left' })
-      .first();
-    await expect(icon).toBeVisible({ timeout: 15_000 });
+    const icon = this.categoryEditorBackArrowMaterialSpan().first();
+    await expect(icon).toBeVisible({ timeout: 20_000 });
     await icon.scrollIntoViewIfNeeded().catch(() => {});
     await icon.click({ force: true });
 

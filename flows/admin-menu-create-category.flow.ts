@@ -67,13 +67,13 @@ export class AdminMenuCreateCategoryFlow {
     await adminPage.clickSaveCategoryForm();
     await adminPage.confirmMultipleTaxesSelectedDialogSaveIfVisible();
     try {
-      await adminPage.expectSaveSuccessMessageVisibleFlexible({ timeout: 20_000 });
+      await adminPage.expectSaveSuccessMessageVisibleFlexible({ timeout: 3_000 });
     } catch {
       /* 部分环境无显式成功提示，依赖后续返回组列表与 Category 检出 */
     }
   }
 
-  @step('业务步骤：步骤6-点击返回箭头回到菜单组视图')
+  @step('业务步骤：步骤6-2-SAVE 后点击 keyboard_arrow_left 的 span 回到组列表（组下 Category 由后续断言检出）')
   async stepBackToMenuGroupFromCategoryEditor(adminPage: AdminPage): Promise<void> {
     await adminPage.clickBackToMenuGroupChevron();
   }
