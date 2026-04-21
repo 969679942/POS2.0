@@ -1,9 +1,10 @@
-import { expect, type Frame, type FrameLocator, type Locator, type Page } from '@playwright/test';
+import { expect, type Frame, type FrameLocator, type Locator, type Page, type Response } from '@playwright/test';
 import { isMoneyCloseWithinCents, parseUsdStringToNumber } from '../utils/money';
 import { parsePriceSummaryToggleInnerText } from '../utils/price-summary';
 import { step } from '../utils/step';
 import { waitUntil } from '../utils/wait';
 import { HomePage } from './home.page';
+import { InventoryPage } from './inventory.page';
 
 export class OrderDishesPage {
   private readonly appFrame: ReturnType<Page['frameLocator']>;
@@ -25,12 +26,15 @@ export class OrderDishesPage {
   private readonly cartButton: Locator;
   private readonly cartBadge: Locator;
   private readonly saveOrderButton: Locator;
+  private readonly inventoryAlertDialog: Locator;
+  private readonly inventoryAlertItems: Locator;
   private readonly priceSummaryToggle: Locator;
   private readonly dishSearchOpenButton: Locator;
+  private readonly orderChip: Locator;
 
   constructor(private readonly page: Page) {
     this.appFrame = this.page.frameLocator('iframe[data-wujie-id="orderDishes"]');
-    this.backButton = this.appFrame.getByRole('button', { name: 'Back' });
+    this.backButton = this.appFrame.locator('button[aria-label="Back"]').first();
     this.sendButton = this.appFrame.getByRole('button', { name: 'Send' });
     this.payButton = this.appFrame.getByRole('button', { name: 'Pay' });
     this.countButton = this.appFrame.getByRole('button', { name: /^(Count|数量)$/ });
@@ -62,6 +66,17 @@ export class OrderDishesPage {
     this.cartButton = this.appFrame.getByRole('button', { name: 'Cart' });
     this.cartBadge = this.appFrame.locator('[data-testid="cart-badge"]');
     this.saveOrderButton = this.appFrame.locator('[data-testid="bottom-button-saveOrderBtn"]');
+    this.inventoryAlertDialog = this.page
+      .locator('#inventory-alert-dialog')
+      .or(
+        this.page
+          .getByRole('heading', { name: /Inventory Alert/i })
+          .locator('xpath=ancestor::*[@role="alertdialog" or @role="dialog"][1]'),
+      )
+      .or(this.page.getByRole('alertdialog', { name: /Inventory Alert/i }))
+      .or(this.page.getByRole('dialog', { name: /Inventory Alert/i }))
+      .first();
+    this.inventoryAlertItems = this.inventoryAlertDialog;
     this.priceSummaryToggle = this.appFrame.locator(
       '[data-test-id="shared-order-price-summary-toggle"], [data-testid="shared-order-price-summary-toggle"]',
     );
@@ -71,6 +86,7 @@ export class OrderDishesPage {
       .or(this.appFrame.getByRole('button', { name: /^搜索$/ }))
       .or(this.appFrame.locator('[aria-label="Search"]'))
       .or(this.appFrame.locator('[aria-label="搜索"]'));
+    this.orderChip = this.appFrame.locator('div[class*="_orderChip_"]').first();
   }
 
   @step('页面操作：确认点餐页已加载')
@@ -168,6 +184,11 @@ export class OrderDishesPage {
     await expect(this.priceDialog).toBeVisible();
   }
 
+  @step('页面读取：判断价格输入弹窗是否可见')
+  async isPriceDialogVisible(): Promise<boolean> {
+    return await this.priceDialog.isVisible().catch(() => false);
+  }
+
   @step((price: number) => `页面操作：输入价格 ${price}`)
   async enterPrice(price: number): Promise<void> {
     await this.expectPriceDialogVisible();
@@ -177,7 +198,10 @@ export class OrderDishesPage {
   @step('页面操作：确认价格输入')
   async confirmPriceDialog(): Promise<void> {
     await this.expectPriceDialogVisible();
-    await this.priceConfirmButton.click();
+    await this.priceConfirmButton.evaluate((buttonElement) => {
+      (buttonElement as HTMLElement).click();
+    });
+    await expect(this.priceDialog).toBeHidden({ timeout: 15_000 });
   }
 
   @step('页面操作：确认规格选择弹窗可见')
@@ -316,6 +340,157 @@ export class OrderDishesPage {
     return new HomePage(this.page);
   }
 
+  @step('页面操作：点击保存订单按钮但不等待离开点餐页')
+  async clickSaveOrderButton(): Promise<void> {
+    await this.saveOrderButton.scrollIntoViewIfNeeded();
+    await this.saveOrderButton.click();
+  }
+
+  @step('页面读取：确认库存警报弹窗已出现')
+  async expectInventoryAlertDialogVisible(): Promise<void> {
+    await expect(this.inventoryAlertDialog).toBeVisible({ timeout: 20_000 });
+    await expect(this.inventoryAlertItems).toBeVisible({ timeout: 20_000 });
+  }
+
+  @step((dishName: string) => `页面读取：确认库存警报弹窗中包含菜品 ${dishName}`)
+  async expectInventoryAlertContainsDish(dishName: string): Promise<void> {
+    await this.expectInventoryAlertDialogVisible();
+    await expect(this.inventoryAlertItems).toContainText(dishName, { timeout: 20_000 });
+  }
+
+  @step('页面读取：判断库存警报弹窗是否可见')
+  async isInventoryAlertDialogVisible(): Promise<boolean> {
+    return await this.inventoryAlertDialog.isVisible().catch(() => false);
+  }
+
+  @step('页面操作：如存在库存警报弹窗则关闭')
+  async dismissInventoryAlertDialogIfPresent(): Promise<void> {
+    if (!(await this.isInventoryAlertDialogVisible())) {
+      return;
+    }
+    await this.page.keyboard.press('Escape').catch(() => {});
+    await waitUntil(
+      async () => await this.isInventoryAlertDialogVisible(),
+      (visible) => visible === false,
+      {
+        timeout: 10_000,
+        interval: 250,
+        message: '库存警报弹窗未能关闭',
+      },
+    ).catch(() => {});
+  }
+
+  @step('页面操作：点击 Send 并在需要时确认延时弹窗')
+  async sendOrder(): Promise<void> {
+    await this.expectLoaded();
+    await this.sendButton.scrollIntoViewIfNeeded();
+    await this.sendButton.click();
+
+    const delayOkButton = this.appFrame.locator('#delayOkBtn').first();
+    if (await delayOkButton.isVisible().catch(() => false)) {
+      await delayOkButton.evaluate((buttonElement) => {
+        (buttonElement as HTMLElement).click();
+      });
+      await waitUntil(
+        async () => await delayOkButton.isVisible().catch(() => false),
+        (visible) => visible === false,
+        {
+          timeout: 10_000,
+          interval: 200,
+          message: 'Send 延时确认弹窗未关闭',
+        },
+      ).catch(() => {});
+    }
+  }
+
+  @step('页面操作：点击 Send 并尝试从响应中读取订单号')
+  async sendOrderAndReadOrderNumber(): Promise<string | null> {
+    const responseBodies: string[] = [];
+    const responseHandler = async (response: Response): Promise<void> => {
+      const request = response.request();
+      if (request.resourceType() !== 'xhr' && request.resourceType() !== 'fetch') {
+        return;
+      }
+
+      const bodyText = await response.text().catch(() => '');
+      if (!bodyText) {
+        return;
+      }
+
+      responseBodies.push(bodyText);
+    };
+
+    this.page.on('response', responseHandler);
+
+    try {
+      await this.sendOrder();
+      return await waitUntil(
+        async () => this.extractOrderNumberFromResponses(responseBodies),
+        (orderNumber) => Boolean(orderNumber),
+        {
+          timeout: 15_000,
+          interval: 250,
+          message: 'Send 后未能从响应中读取到订单号',
+        },
+      );
+    } finally {
+      this.page.off('response', responseHandler);
+    }
+  }
+
+  @step('页面读取：读取点餐页左上角订单号 chip')
+  async readOrderNumberChipText(): Promise<string> {
+    await this.expectLoaded();
+    await expect(this.orderChip).toBeVisible({ timeout: 15_000 });
+
+    return await waitUntil(
+      async () => {
+        const text = (await this.orderChip.textContent().catch(() => '') ?? '').replace(/\s+/g, ' ').trim();
+        if (/^#\d{1,10}$/.test(text)) {
+          return text;
+        }
+        return '';
+      },
+      (orderNumber) => Boolean(orderNumber),
+      {
+        timeout: 15_000,
+        interval: 250,
+        message: 'Send 后未能在左上角订单 chip 读到订单号',
+      },
+    );
+  }
+
+  @step('页面操作：从点餐页返回 POS 主页壳')
+  async returnToHomeShell(): Promise<HomePage> {
+    await this.expectLoaded();
+    await this.backButton.scrollIntoViewIfNeeded();
+    await this.backButton.evaluate((buttonElement) => {
+      (buttonElement as HTMLElement).click();
+    });
+    await this.dismissOrderExitDialogIfPresent();
+    const homePage = new HomePage(this.page);
+    await homePage.expectPrimaryFunctionCardsVisible();
+    return homePage;
+  }
+
+  @step('页面操作：从点餐页打开库存管理页面')
+  async openInventoryPage(): Promise<InventoryPage> {
+    await this.expectLoaded();
+    await this.page.evaluate(() => {
+      const eventBus = (window as typeof window & {
+        mainApp?: { eventBus?: { emit?: (eventName: string, payload: unknown) => void } };
+      }).mainApp?.eventBus;
+      if (!eventBus?.emit) {
+        throw new Error('未找到 mainApp.eventBus，无法从点餐页打开库存管理页面');
+      }
+      eventBus.emit('OrderDishes.headerAction', { action: 'inventory' });
+    });
+
+    const inventoryPage = new InventoryPage(this.page);
+    await inventoryPage.expectLoaded();
+    return inventoryPage;
+  }
+
   @step('页面读取：读取点餐页价格汇总中的 Total 金额文本')
   async readPriceSummaryTotalText(): Promise<string> {
     await this.expectLoaded();
@@ -432,6 +607,12 @@ export class OrderDishesPage {
           item.querySelector('[class*="_mainRow_"]') ??
           item.querySelector('div[class*="mainRow"]') ??
           item;
+        const text = ((mainRow as HTMLElement).innerText ?? '').replace(/\s+/g, ' ').trim();
+        const quantityMatch = text.match(/^(?:\s*)?(\d+(?:\.\d+)?)\s+.+\$\s*[\d,.]+/);
+        if (quantityMatch) {
+          total += Number(quantityMatch[1]);
+          continue;
+        }
         const spans = mainRow.querySelectorAll(':scope > div > span, :scope > span');
         const firstText = (spans[0]?.textContent ?? '').trim();
         const asNum = Number(firstText);
@@ -479,13 +660,13 @@ export class OrderDishesPage {
       let total = 0;
       for (const btn of Array.from(document.querySelectorAll('button'))) {
         const text = ((btn as HTMLElement).innerText ?? '').replace(/\s+/g, ' ').trim();
-        if (!/^\d+\s+.+\$[\d,.]+/.test(text)) {
+        if (!/^\d+(?:\.\d+)?\s+.+\$[\d,.]+/.test(text)) {
           continue;
         }
         if (/^Share For Whole Table$/i.test(text)) {
           continue;
         }
-        const m = /^(\d+)\s/.exec(text);
+        const m = /^(\d+(?:\.\d+)?)\s/.exec(text);
         if (m) {
           total += Number(m[1]);
         }
@@ -1706,11 +1887,34 @@ export class OrderDishesPage {
     }
     await expect(this.backButton).toBeVisible({ timeout: 15_000 });
     await this.backButton.click();
+    await this.dismissOrderExitDialogIfPresent();
     await waitUntil(
       async () => !/#order[_-]?dishes/i.test(this.page.url()),
       (ok) => ok,
       { timeout: 25_000, message: '从点餐页返回后主 URL 仍含 #orderDishes' },
     );
+  }
+
+  @step('页面操作：如点餐页退出确认弹窗出现则点击 OK')
+  private async dismissOrderExitDialogIfPresent(): Promise<void> {
+    const exitDialog = this.appFrame
+      .getByRole('alertdialog', { name: /^Exit$/i })
+      .or(this.appFrame.getByRole('dialog', { name: /^Exit$/i }));
+    if (!(await exitDialog.isVisible().catch(() => false))) {
+      return;
+    }
+    const okButton = exitDialog.getByRole('button', { name: /^OK$/i }).first();
+    await expect(okButton).toBeVisible({ timeout: 10_000 });
+    await okButton.click({ force: true });
+    await waitUntil(
+      async () => await exitDialog.isVisible().catch(() => false),
+      (visible) => visible === false,
+      {
+        timeout: 15_000,
+        interval: 250,
+        message: '点餐页退出确认弹窗未关闭',
+      },
+    ).catch(() => {});
   }
 
   private resolveWeightConfirmButton(): Locator {
@@ -1734,7 +1938,9 @@ export class OrderDishesPage {
   }
 
   private resolveDishButton(dishName: string): Locator {
-    return this.appFrame.getByRole('button', { name: dishName, exact: true });
+    return this.appFrame
+      .getByRole('button', { name: new RegExp(this.escapeRegExp(dishName), 'i') })
+      .first();
   }
 
   private resolveCountDialogNumberButton(digit: string): Locator {
@@ -2199,6 +2405,91 @@ export class OrderDishesPage {
         return dialog;
       }
     }
+    return null;
+  }
+
+  private extractOrderNumberFromResponses(responseBodies: string[]): string | null {
+    for (let index = responseBodies.length - 1; index >= 0; index -= 1) {
+      const orderNumber = this.extractOrderNumberFromText(responseBodies[index]);
+      if (orderNumber) {
+        return orderNumber;
+      }
+    }
+    return null;
+  }
+
+  private extractOrderNumberFromText(text: string): string | null {
+    const compact = text.replace(/\s+/g, ' ').trim();
+    const directMatch = compact.match(/#\d{1,10}/);
+    if (directMatch) {
+      return directMatch[0];
+    }
+
+    const keywordMatch = compact.match(
+      /(?:order(?:\s*no\.?|number)?|order_no|orderNo|orderId|ticket(?:\s*no\.?|number)?|receipt(?:\s*no\.?|number)?)\s*[:=]\s*"?([#]?\d{1,10})"?/i,
+    );
+    if (keywordMatch?.[1]) {
+      return keywordMatch[1].startsWith('#') ? keywordMatch[1] : `#${keywordMatch[1]}`;
+    }
+
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      return this.findOrderNumberInValue(parsed);
+    } catch {
+      return null;
+    }
+  }
+
+  private findOrderNumberInValue(value: unknown): string | null {
+    if (value == null) {
+      return null;
+    }
+
+    if (typeof value === 'string') {
+      const compact = value.replace(/\s+/g, ' ').trim();
+      const directMatch = compact.match(/#\d{1,10}/);
+      if (directMatch) {
+        return directMatch[0];
+      }
+      if (/^\d{1,10}$/.test(compact)) {
+        return `#${compact}`;
+      }
+      return null;
+    }
+
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return `#${Math.trunc(value)}`;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const orderNumber = this.findOrderNumberInValue(item);
+        if (orderNumber) {
+          return orderNumber;
+        }
+      }
+      return null;
+    }
+
+    if (typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      for (const [key, nestedValue] of Object.entries(record)) {
+        if (/order(?:\s*no\.?|number)?|order_no|orderNo|orderId|ticket(?:\s*no\.?|number)?|receipt(?:\s*no\.?|number)?/i.test(key)) {
+          const direct = this.findOrderNumberInValue(nestedValue);
+          if (direct) {
+            return direct;
+          }
+        }
+      }
+
+      for (const nestedValue of Object.values(record)) {
+        const orderNumber = this.findOrderNumberInValue(nestedValue);
+        if (orderNumber) {
+          return orderNumber;
+        }
+      }
+    }
+
     return null;
   }
 

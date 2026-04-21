@@ -83,6 +83,13 @@ export class RecallPage {
   private readonly activeFilterTags: Locator;
   private readonly orderListContainer: Locator;
   private readonly orderDetailsDialog: Locator;
+  private readonly orderDetailsMoreActionsButton: Locator;
+  private readonly partialVoidButton: Locator;
+  private readonly voidAllButton: Locator;
+  private readonly voidReasonInput: Locator;
+  private readonly restoreInventoryCheckbox: Locator;
+  private readonly voidSubmitButton: Locator;
+  private readonly recallExitButton: Locator;
 
   constructor(private readonly page: Page) {
     this.newOrderButton = this.page.getByTestId('recall2-header-new-order');
@@ -127,6 +134,37 @@ export class RecallPage {
     this.activeFilterTags = this.page.getByTestId(/^recall2-filter-tag-(?!label|value).+$/);
     this.orderListContainer = this.page.getByTestId('recall2-order-list-container');
     this.orderDetailsDialog = this.page.locator('[role="dialog"][data-testid="pos-ui-modal"]');
+    this.orderDetailsMoreActionsButton = this.orderDetailsDialog
+      .getByRole('button', { name: /^More$/i })
+      .or(this.page.locator('#odsmymoreicon'))
+      .or(this.orderDetailsDialog.getByText(/^More$/i))
+      .first();
+    this.partialVoidButton = this.orderDetailsDialog
+      .locator('#pvoidod')
+      .or(this.page.getByRole('button', { name: /^Void All$/i }))
+      .or(this.page.getByRole('button', { name: /^Void$/i }))
+      .or(this.page.getByText(/Void All|Void|Partial Void|退菜/i))
+      .first();
+    this.voidAllButton = this.orderDetailsDialog
+      .getByRole('button', { name: /^Void All$/i })
+      .or(this.page.getByRole('button', { name: /^Void All$/i }))
+      .or(this.orderDetailsDialog.getByText(/^Void All$/i))
+      .or(this.page.getByText(/^Void All$/i))
+      .first();
+    this.voidReasonInput = this.page.locator('#void-note-input:visible');
+    this.restoreInventoryCheckbox = this.page
+      .getByLabel(/Restore inventory for items sent to kitchen/i)
+      .first();
+    this.voidSubmitButton = this.page
+      .getByTestId('shared-void-dialog-confirm')
+      .or(this.page.locator('[data-testid="button-default"][data-test-id="shared-void-dialog-confirm"]'))
+      .or(this.page.getByRole('button', { name: /^Void$/i }))
+      .first();
+    this.recallExitButton = this.page
+      .locator('.rcreturnbx_bth_exit')
+      .or(this.page.locator('.rcreturnbx_bth.ghost.rcreturnbx_bth_exit'))
+      .or(this.page.getByRole('button', { name: /^(Back|Exit|返回|关闭)$/i }))
+      .first();
   }
 
   @step('页面操作：确认 Recall 页面已经加载完成')
@@ -136,6 +174,14 @@ export class RecallPage {
     await expect(this.pagingButton).toBeVisible({ timeout: 15_000 });
     await expect(this.paymentStatusButton).toBeVisible({ timeout: 15_000 });
     /** 新版 Recall 可能仅展示「Search orders」入口，输入框在弹层内，故以触发器为壳加载信号 */
+    await expect(this.searchTriggerButton).toBeVisible({ timeout: 35_000 });
+    await expect(this.moreFiltersButton).toBeVisible({ timeout: 15_000 });
+  }
+
+  @step('页面操作：确认 Recall 基础壳已经加载完成')
+  async expectShellLoaded(): Promise<void> {
+    await expect(this.page).toHaveURL(/#recall/);
+    await expect(this.pagingButton).toBeVisible({ timeout: 15_000 });
     await expect(this.searchTriggerButton).toBeVisible({ timeout: 35_000 });
     await expect(this.moreFiltersButton).toBeVisible({ timeout: 15_000 });
   }
@@ -167,7 +213,9 @@ export class RecallPage {
 
   @step('页面操作：打开手动输入搜索弹窗')
   async openManualSearchDialog(): Promise<void> {
-    await this.searchTriggerButton.click();
+    await this.searchTriggerButton.evaluate((buttonElement) => {
+      (buttonElement as HTMLElement).click();
+    });
     await expect(this.searchDialog).toBeVisible();
   }
 
@@ -259,7 +307,9 @@ export class RecallPage {
 
     await this.closeOrderDetailsDialog();
     await expect(this.orderListContainer).toBeVisible();
-    await this.orderListContainer.getByText(normalizedOrderNumber, { exact: true }).first().click();
+    await this.orderListContainer.getByText(normalizedOrderNumber, { exact: true }).first().evaluate((element) => {
+      (element as HTMLElement).click();
+    });
     await this.waitForOrderDetailsDialogReady();
   }
 
@@ -744,6 +794,77 @@ export class RecallPage {
 
     await this.page.keyboard.press('Escape');
     await expect(this.orderDetailsDialog).toBeHidden({ timeout: 5_000 });
+  }
+
+  @step('页面操作：在 Recall 订单详情中打开更多操作菜单')
+  async openOrderDetailsMoreActions(): Promise<void> {
+    await expect(this.orderDetailsMoreActionsButton).toBeVisible({ timeout: 15_000 });
+    await this.orderDetailsMoreActionsButton.click();
+  }
+
+  @step('页面操作：在 Recall 订单详情中点击部分退菜')
+  async startPartialVoidCurrentOrder(): Promise<void> {
+    await this.openOrderDetailsMoreActions();
+    await expect(this.partialVoidButton).toBeVisible({ timeout: 10_000 });
+    await this.partialVoidButton.click();
+  }
+
+  @step('页面操作：在 Recall 订单详情中点击 Void All')
+  async startVoidAllCurrentOrder(): Promise<void> {
+    await this.openOrderDetailsMoreActions();
+    await expect(this.voidAllButton).toBeVisible({ timeout: 10_000 });
+    await this.voidAllButton.click();
+  }
+
+  @step((reason: string) => `页面操作：在 Recall 退菜弹窗中填写原因 ${reason}`)
+  async fillVoidReason(reason: string): Promise<void> {
+    const reasonButton = this.page
+      .getByRole('button', { name: reason, exact: true })
+      .or(this.page.getByText(reason, { exact: true }))
+      .first();
+    await expect(reasonButton).toBeVisible({ timeout: 15_000 });
+    await reasonButton.click();
+    if (await this.voidReasonInput.isVisible().catch(() => false)) {
+      await expect(this.voidReasonInput).toHaveValue(reason, { timeout: 10_000 });
+    }
+  }
+
+  @step('页面操作：提交 Recall 退菜原因')
+  async submitVoidReason(): Promise<void> {
+    if (await this.page.getByTestId('pos-keyboard-button-{close}').isVisible().catch(() => false)) {
+      await this.page.getByTestId('pos-keyboard-button-{close}').evaluate((closeButton) => {
+        (closeButton as HTMLElement).click();
+      });
+    }
+    if (await this.restoreInventoryCheckbox.isVisible().catch(() => false)) {
+      if (!(await this.restoreInventoryCheckbox.isChecked().catch(() => false))) {
+        await this.restoreInventoryCheckbox.check().catch(async () => {
+          await this.restoreInventoryCheckbox.evaluate((checkboxElement) => {
+            (checkboxElement as HTMLElement).click();
+          });
+        });
+      }
+    }
+    await expect(this.voidSubmitButton).toBeVisible({ timeout: 15_000 });
+    await this.voidSubmitButton.click();
+  }
+
+  @step('页面操作：退出 Recall 页面回到上一层')
+  async exitRecallPage(): Promise<void> {
+    if (!(await this.recallExitButton.isVisible().catch(() => false))) {
+      return;
+    }
+    await this.recallExitButton.evaluate((buttonElement) => {
+      (buttonElement as HTMLElement).click();
+    });
+    await waitUntil(
+      async () => this.page.url(),
+      (url) => !/#recall/i.test(url),
+      {
+        timeout: 10_000,
+        message: '点击 Back 后仍停留在 Recall 页面',
+      },
+    ).catch(() => {});
   }
 
   @step((_filterButton: Locator, optionName: string) => `页面操作：从顶部筛选下拉菜单中选择 ${optionName}`)

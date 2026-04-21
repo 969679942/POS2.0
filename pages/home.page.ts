@@ -27,6 +27,8 @@ export class HomePage {
   private readonly languageMenuButton: Locator;
   /** 顶栏消息（铃铛图标入口，可访问名常为 message） */
   private readonly messageMenuButton: Locator;
+  /** 顶栏刷新入口 */
+  private readonly refreshButton: Locator;
 
   constructor(private readonly page: Page) {
     this.appFrame = this.page.frameLocator('#newLoginContainer iframe');
@@ -54,6 +56,10 @@ export class HomePage {
     this.messageMenuButton = this.appFrame
       .getByRole('button', { name: /^message$/i })
       .or(this.appFrame.getByRole('button', { name: /消息|通知|Notice/i }))
+      .first();
+    this.refreshButton = this.appFrame
+      .getByRole('button', { name: /Refresh|刷新/i })
+      .or(this.appFrame.getByRole('button', { name: /RefreshIcon/i }))
       .first();
   }
 
@@ -274,12 +280,24 @@ export class HomePage {
 
   @step('页面操作：确认主页的核心功能入口已经可用')
   async expectPrimaryFunctionCardsVisible(): Promise<void> {
-    await expect(this.resolveFunctionButton('Dine In')).resolves.toBeDefined();
-    await expect(this.resolveFunctionButton('Delivery')).resolves.toBeDefined();
-    await expect(this.resolveFunctionButton('Pick Up')).resolves.toBeDefined();
-    await expect(this.resolveFunctionButton('Report')).resolves.toBeDefined();
-    await expect(this.resolveFunctionButton('Admin')).resolves.toBeDefined();
-    await expect(this.resolveFunctionButton('Recall')).resolves.toBeDefined();
+    await expect(this.appFrame.getByTestId('pos-ui-function-card-dine_in')).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(this.appFrame.getByTestId('pos-ui-function-card-delivery')).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(this.appFrame.getByTestId('pos-ui-function-card-pickup')).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(this.appFrame.getByTestId('pos-ui-function-card-report')).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(this.appFrame.getByTestId('pos-ui-function-card-admin')).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(this.appFrame.getByTestId('pos-ui-function-card-recall')).toBeVisible({
+      timeout: 15_000,
+    });
   }
 
   @step('页面操作：点击 Dine In 入口并进入选桌页')
@@ -350,8 +368,61 @@ export class HomePage {
 
   @step('页面操作：点击 Recall 入口并进入 Recall 页面')
   async clickRecall(): Promise<RecallPage> {
-    await this.clickFunctionButton('Recall');
-    return new RecallPage(this.page);
+    await this.clickRefreshButton();
+    await this.expectPrimaryFunctionCardsVisible();
+    const recallClicked = await this.clickRecallInLoginIframe();
+    if (!recallClicked) {
+      await this.clickFunctionButton('Recall');
+    }
+    const recallPage = new RecallPage(this.page);
+    await waitUntil(
+      async () => {
+        const url = this.page.url();
+        const searchTriggerVisible = await this.page
+          .getByTestId('recall2-search-trigger')
+          .isVisible()
+          .catch(() => false);
+        return /#recall/i.test(url) || searchTriggerVisible;
+      },
+      (loaded) => loaded,
+      {
+        timeout: 25_000,
+        interval: 250,
+        message: '点击 Recall 后未进入 Recall 页面',
+      },
+    );
+    return recallPage;
+  }
+
+  @step('页面操作：在登录壳 iframe 内点击 Recall 入口')
+  private async clickRecallInLoginIframe(): Promise<boolean> {
+    const loginIframe = this.page.locator('iframe[data-wujie-id="login"]');
+    if (!(await loginIframe.isVisible().catch(() => false))) {
+      return false;
+    }
+
+    const loginFrame = loginIframe.contentFrame();
+    if (!loginFrame) {
+      return false;
+    }
+
+    const recallButton = loginFrame.getByTestId('pos-ui-function-card-recall');
+    if (!(await recallButton.isVisible().catch(() => false))) {
+      return false;
+    }
+
+    await recallButton.evaluate((buttonElement) => {
+      (buttonElement as HTMLElement).click();
+    });
+    return true;
+  }
+
+  @step('页面操作：点击主页刷新按钮')
+  private async clickRefreshButton(): Promise<void> {
+    await expect(this.refreshButton).toBeVisible({ timeout: 15_000 });
+    await this.refreshButton.evaluate((buttonElement) => {
+      (buttonElement as HTMLElement).click();
+    });
   }
 
   @step((buttonName: string) => `页面操作：点击主页中的 ${buttonName} 功能入口`)

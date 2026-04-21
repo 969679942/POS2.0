@@ -1,0 +1,122 @@
+import { expect } from '@playwright/test';
+import { createPublishAnnouncementAndCloseToHome } from '../../flows/home-announcement.flow';
+import { test } from '../../fixtures/test.fixture';
+import { waitUntil } from '../../utils/wait';
+import { ensureLoggedInHomePage } from './pos-business.shared';
+
+test.describe('【首页-业务冒烟】', () => {
+  test(
+    '应能从主页打开消息中心并看到工具栏',
+    {
+      tag: ['@smoke'],
+    },
+    async ({ homePage, licenseSelectionPage, employeeLoginPage }) => {
+      const loggedInHomePage = await ensureLoggedInHomePage({
+        homePage,
+        licenseSelectionPage,
+        employeeLoginPage,
+        employeePassword: '11',
+      });
+
+      const messagesPage = await loggedInHomePage.openMessageCenter();
+      await messagesPage.expectMessageToolbarActionsVisible();
+    },
+  );
+
+  test(
+    '应能关闭消息中心并回到主页主功能区',
+    {
+      tag: ['@smoke'],
+    },
+    async ({ homePage, licenseSelectionPage, employeeLoginPage }) => {
+      const loggedInHomePage = await ensureLoggedInHomePage({
+        homePage,
+        licenseSelectionPage,
+        employeeLoginPage,
+        employeePassword: '11',
+      });
+
+      const messagesPage = await loggedInHomePage.openMessageCenter();
+      await messagesPage.expectMessageToolbarActionsVisible();
+      await messagesPage.clickMessageToolbarClose();
+      await messagesPage.expectMessagePanelClosed();
+      await loggedInHomePage.expectPrimaryFunctionCardsVisible();
+    },
+  );
+
+  test(
+    '应能新建并发送一条公告',
+    {
+      tag: ['@smoke'],
+    },
+    async ({ homePage, licenseSelectionPage, employeeLoginPage }) => {
+      const loggedInHomePage = await ensureLoggedInHomePage({
+        homePage,
+        licenseSelectionPage,
+        employeeLoginPage,
+        employeePassword: '11',
+      });
+
+      const { subject, body } = await createPublishAnnouncementAndCloseToHome(loggedInHomePage);
+      expect(subject).toContain('自动化公告主题-');
+      expect(body).toContain('自动化公告正文-');
+    },
+  );
+
+  test(
+    '应能重新进入消息中心查看刚创建的公告并清空列表',
+    {
+      tag: ['@smoke'],
+    },
+    async ({ homePage, licenseSelectionPage, employeeLoginPage }) => {
+      const loggedInHomePage = await ensureLoggedInHomePage({
+        homePage,
+        licenseSelectionPage,
+        employeeLoginPage,
+        employeePassword: '11',
+      });
+
+      const { subject, body } = await createPublishAnnouncementAndCloseToHome(loggedInHomePage);
+      const messagesPage = await loggedInHomePage.openMessageCenter();
+      await messagesPage.expectMessageToolbarActionsVisible();
+      await messagesPage.clickMessageListItemBySubjectOrBody(subject, body);
+      await messagesPage.expectAnnouncementDetailShowsSubjectAndBody(subject, body);
+      await messagesPage.clickClearAllInMessageList();
+      await messagesPage.expectMessageListDoesNotShowAnnouncementSubject(subject);
+    },
+  );
+
+  test(
+    '应能从主页切换到简体中文',
+    {
+      tag: ['@smoke'],
+    },
+    async ({ homePage, licenseSelectionPage, employeeLoginPage }) => {
+      const loggedInHomePage = await ensureLoggedInHomePage({
+        homePage,
+        licenseSelectionPage,
+        employeeLoginPage,
+        employeePassword: '11',
+      });
+
+      await loggedInHomePage.expectPrimaryFunctionCardsVisible();
+      await loggedInHomePage.expectLanguageMenuButtonVisible();
+      await loggedInHomePage.openLanguageMenu();
+      if (await loggedInHomePage.isDineInFunctionCardShowingChineseLabel()) {
+        await loggedInHomePage.clickLanguageOptionEnglish();
+        await waitUntil(
+          async () => !(await loggedInHomePage.isDineInFunctionCardShowingChineseLabel()),
+          (ok) => ok,
+          {
+            timeout: 15_000,
+            interval: 300,
+            message: '切回 English 后，堂吃功能卡仍显示为中文标识',
+          },
+        );
+      }
+      await loggedInHomePage.openLanguageMenu();
+      await loggedInHomePage.clickLanguageOptionSimplifiedChinese();
+      await loggedInHomePage.expectPrimaryFunctionCardsShowDineInAndDeliveryChinese();
+    },
+  );
+});
